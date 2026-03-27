@@ -11,6 +11,9 @@ import folium
 import geopandas as gpd
 import pandas as pd
 import streamlit as st
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
 from streamlit_folium import st_folium
 
 # ── Path setup ────────────────────────────────────────────────────────────────
@@ -26,6 +29,40 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Authentication ─────────────────────────────────────────────────────────────
+_CRED_FILE = ROOT / "credentials.yaml"
+if not _CRED_FILE.exists():
+    st.error(
+        "credentials.yaml not found. "
+        "Run `python manage_users.py` from the project root to create user accounts."
+    )
+    st.stop()
+
+with open(_CRED_FILE) as _f:
+    _auth_config = yaml.load(_f, Loader=SafeLoader)
+
+_authenticator = stauth.Authenticate(
+    _auth_config["credentials"],
+    _auth_config["cookie"]["name"],
+    _auth_config["cookie"]["key"],
+    _auth_config["cookie"]["expiry_days"],
+    auto_hash=False,   # passwords are pre-hashed by manage_users.py
+)
+
+_authenticator.login()
+
+if st.session_state["authentication_status"] is False:
+    st.error("Incorrect username or password.")
+    st.stop()
+elif st.session_state["authentication_status"] is None:
+    st.info("Please log in to access the WM Land Screener.")
+    st.stop()
+
+# ── Logged in — determine role ─────────────────────────────────────────────────
+_username  = st.session_state["username"]
+_user_data = _auth_config["credentials"]["usernames"].get(_username, {})
+IS_ADMIN   = _user_data.get("role") == "admin"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 SCORE_HIGH   = 70
@@ -234,6 +271,12 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple) -> folium.Map:
 with st.sidebar:
     st.title("🏗️ WM Land Screener")
     st.caption("West Michigan Vacant Land Feasibility Tool — Phase 1")
+
+    # User info + logout
+    _display_name = _user_data.get("first_name") or _username
+    _role_badge   = " · Admin" if IS_ADMIN else ""
+    st.caption(f"Logged in as **{_display_name}**{_role_badge}")
+    _authenticator.logout(button_name="Log out", location="sidebar")
     st.divider()
 
     # City selector
@@ -314,14 +357,19 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Pipeline")
-    st.caption("Cached data loads in seconds. Refresh re-downloads all layers (~2 min).")
-    col_a, col_b = st.columns(2)
-    with col_a:
-        run_btn = st.button("▶ Run", use_container_width=True,
-                            help="Run pipeline using cached layer data")
-    with col_b:
-        refresh_btn = st.button("⟳ Refresh", use_container_width=True,
-                                help="Re-download all layers then run pipeline")
+    if IS_ADMIN:
+        st.caption("Cached data loads in seconds. Refresh re-downloads all layers (~2 min).")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            run_btn = st.button("▶ Run", use_container_width=True,
+                                help="Run pipeline using cached layer data")
+        with col_b:
+            refresh_btn = st.button("⟳ Refresh", use_container_width=True,
+                                    help="Re-download all layers then run pipeline")
+    else:
+        run_btn = False
+        refresh_btn = False
+        st.caption("Data is refreshed by the admin. Results update automatically.")
 
 # ── Trigger pipeline if requested ─────────────────────────────────────────────
 if run_btn:

@@ -24,6 +24,7 @@ build/
 *.env
 secrets.json
 credentials.json
+credentials.yaml        # user logins — NEVER commit this
 
 # ── OS / editor ───────────────────────────────────────────────────────────────
 .DS_Store

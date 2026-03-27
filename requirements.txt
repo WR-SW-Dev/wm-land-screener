@@ -8,4 +8,7 @@ owslib>=0.29.0
 folium>=0.15.0
 streamlit>=1.29.0
 streamlit-folium>=0.18.0
+streamlit-authenticator>=0.3.0
 python-dotenv>=1.0.0
+PyYAML>=6.0
+bcrypt>=4.0.0

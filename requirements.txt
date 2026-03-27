@@ -1,0 +1,11 @@
+geopandas>=0.14.0
+shapely>=2.0.0
+pandas>=2.0.0
+fiona>=1.9.0
+pyproj>=3.6.0
+requests>=2.31.0
+owslib>=0.29.0
+folium>=0.15.0
+streamlit>=1.29.0
+streamlit-folium>=0.18.0
+python-dotenv>=1.0.0

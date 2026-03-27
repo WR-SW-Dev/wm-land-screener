@@ -1,0 +1,37 @@
+# ── Cached data downloads ─────────────────────────────────────────────────────
+# These are re-downloaded automatically by the pipeline — safe to exclude.
+# Run `python src/pipeline.py --refresh` to re-fetch after cloning.
+data/raw/
+data/processed/
+
+# ── Pipeline output ───────────────────────────────────────────────────────────
+# Generated CSVs and GeoJSONs — re-created by running the pipeline.
+output/
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.*
+*.env
+secrets.json
+credentials.json
+
+# ── OS / editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/

@@ -23,11 +23,12 @@ from config import (
 )
 from data_loader import (
     load_parcels, load_zoning, load_flood_zones, load_wetlands,
-    load_buildings, load_future_landuse,
+    load_buildings, load_future_landuse, load_soils,
 )
 from overlay import (
     add_parcel_area, add_zoning, add_flood_coverage, add_wetland_coverage,
-    add_building_coverage, add_net_developable, add_future_landuse,
+    add_building_coverage, add_net_developable, add_future_landuse, add_shape_score,
+    add_soil_info,
 )
 from scoring import add_scores, SCORE_COMPONENTS
 
@@ -37,17 +38,19 @@ OUTPUT_COLS = [
     "calc_acres", "net_dev_acres",
     "zone_code", "zone_label", "zone_description",
     "mf_permitted", "adu_permitted", "sf_permitted",
-    "max_units_per_acre", "units_conservative", "units_optimistic",
+    "max_units_per_acre", "mf_max_units_per_acre", "units_conservative", "units_optimistic",
     "flood_pct", "wetland_pct",
     "building_count", "building_pct",
+    # Soil data (USDA NRCS SSURGO via Soil Data Access)
+    "soil_1", "soil_2", "soil_3",
     "sevvalue", "taxableval", "taxablevalue",   # taxableval = GH city; taxablevalue = Ottawa County
     # Future Land Use / master plan
     "future_lu_code", "future_lu_label", "future_max_units",
     "rezoning_upside", "rezoning_delta",
     # Scoring
     "pass_filter", "filter_reason", "score",
-    "pts_density", "pts_size", "pts_wetland", "pts_flood", "pts_permitted",
-    "pts_rezoning",
+    "pts_density", "pts_rezoning", "pts_wetland", "pts_flood", "pts_shape",
+    "shape_score",
     # Ordinance review
     "review_flag", "review_reasons", "ordinance_url",
     # Development pathway (how the parcel reaches ≥3 u/ac)
@@ -92,14 +95,19 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
     print("\n[6/7] Loading future land use (master plan)...")
     flu_gdf = load_future_landuse(bbox, city_key, city_cfg, force_download)
 
+    print("\n[7/7] Loading USDA NRCS soil data...")
+    soils = load_soils(bbox, city_key, force_download)
+
     # ── 2. Overlays ───────────────────────────────────────────────────────────
-    print("\n[7/7] Running overlays and scoring...")
+    print("\n[8/8] Running overlays and scoring...")
     parcels = add_parcel_area(parcels)
+    parcels = add_shape_score(parcels)
     parcels = add_zoning(parcels, zoning)
     parcels = add_flood_coverage(parcels, flood)
     parcels = add_wetland_coverage(parcels, wetlands)
     parcels = add_building_coverage(parcels, buildings)
     parcels = add_net_developable(parcels)
+    parcels = add_soil_info(parcels, soils)
 
     # FLU overlay — runs after zoning so max_units_per_acre is populated for delta calc
     flu_lookup     = city_cfg.get("flu_lu_table") or {}
@@ -107,8 +115,7 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
     parcels = add_future_landuse(parcels, flu_gdf, flu_lookup, flu_code_field)
 
     # ── 3. Score ──────────────────────────────────────────────────────────────
-    parcels = add_scores(parcels, min_acres=min_acres, zoning_table=zoning_table,
-                         city_key=city_key)
+    parcels = add_scores(parcels, zoning_table=zoning_table, city_key=city_key)
 
     # ── 4. Identify useful ID/address columns ─────────────────────────────────
     # Grand Haven city fields (after lowercasing): PARCELNUMB / PIN, ADDRESS / PROPSTREET, OWNERNAME

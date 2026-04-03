@@ -316,6 +316,130 @@ def add_future_landuse(parcels: gpd.GeoDataFrame,
     return result
 
 
+def add_shape_score(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    Add shape_score (0–1) measuring how compact/square a parcel is.
+    Formula: 16 × area / perimeter² (normalized so a perfect square = 1.0).
+    Circles score slightly above 1 and are capped at 1.
+    Long, skinny, or irregular parcels score well below 1.
+    Calculated in UTM Zone 17N (metres) for accuracy.
+    """
+    p = parcels.copy()
+    proj = _to_area_crs(parcels[["geometry"]].copy())
+    area      = proj.geometry.area
+    perimeter = proj.geometry.length
+    # Avoid division by zero on degenerate geometries
+    safe_perim = perimeter.replace(0, float("nan"))
+    score = (16 * area / (safe_perim ** 2)).clip(upper=1.0).fillna(0.0)
+    p["shape_score"] = score.values
+    return p
+
+
+def add_soil_info(parcels: gpd.GeoDataFrame, soils: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """
+    For each parcel, identify the dominant soil type(s) by intersection area.
+
+    Rules:
+      - Always show the soil covering the largest share of the parcel.
+      - Also show 2nd and 3rd soils if they each cover ≥ 15% of the parcel.
+      - Maximum 3 soils shown.
+
+    Adds columns:
+      soil_1  — dominant soil: "Name — Drainage class — Hydric rating (pct%)"
+      soil_2  — second soil (if applicable, else "")
+      soil_3  — third soil (if applicable, else "")
+    """
+    p = parcels.copy()
+    for col in ["soil_1", "soil_2", "soil_3"]:
+        p[col] = ""
+
+    if soils is None or soils.empty:
+        return p
+
+    # Each row in soils is a distinct polygon fragment — do NOT deduplicate.
+    # Attributes (muname, drainagecl, hydricrating) were merged per-mukey during
+    # download, so rows with the same mukey are physically separate polygons.
+    keep_cols = [c for c in ["muname", "drainagecl", "hydricrating", "geometry"]
+                 if c in soils.columns]
+    s_proj = _to_area_crs(soils[keep_cols].copy())
+
+    p_proj = _to_area_crs(parcels[["geometry"]].copy()).reset_index(drop=True)
+    p_proj["_pidx"]        = p_proj.index
+    p_proj["_parcel_area"] = p_proj.geometry.area
+
+    try:
+        intersected = gpd.overlay(
+            p_proj[["_pidx", "_parcel_area", "geometry"]],
+            s_proj.reset_index(drop=True),
+            how="intersection",
+            keep_geom_type=False,
+        )
+    except Exception as e:
+        print(f"  [warn] Soil overlay failed: {e}")
+        return p
+
+    if intersected.empty:
+        return p
+
+    intersected["int_area"] = intersected.geometry.area
+
+    MIN_SECONDARY_PCT = 15.0   # minimum % to include 2nd or 3rd soil
+
+    results: dict[int, list[str]] = {}
+    for pid, group in intersected.groupby("_pidx"):
+        parcel_area = group["_parcel_area"].iloc[0]
+        if parcel_area <= 0:
+            continue
+
+        group = group.copy()
+        group["pct"] = group["int_area"] / parcel_area * 100
+
+        # Aggregate by soil identity (handles fragmented polygons of same mutype)
+        agg_cols = [c for c in ["muname", "drainagecl", "hydricrating"] if c in group.columns]
+        agg = (
+            group.groupby(agg_cols, dropna=False)["pct"]
+                 .sum()
+                 .reset_index()
+                 .sort_values("pct", ascending=False)
+                 .reset_index(drop=True)
+        )
+
+        soil_strings = []
+        for i, row in agg.iterrows():
+            if i > 0 and row["pct"] < MIN_SECONDARY_PCT:
+                break
+            if len(soil_strings) >= 3:
+                break
+            name   = str(row.get("muname",      "") or "Unknown")
+            drain  = str(row.get("drainagecl",  "") or "Unknown")
+            # Translate raw SSURGO hydric rating to plain English
+            _hydric_raw = str(row.get("hydricrating", "") or "")
+            hydric = {
+                "Yes":      "Hydric",
+                "No":       "Not hydric",
+                "Partial":  "Partially hydric",
+                "All":      "Hydric",
+                "Unranked": "Unclassified",
+            }.get(_hydric_raw, _hydric_raw or "Unknown")
+            pct    = row["pct"]
+            soil_strings.append(f"{name} — {drain} — {hydric} ({pct:.0f}%)")
+
+        results[int(pid)] = soil_strings
+
+    # Map results back by position (p_proj was reset_index(drop=True), so _pidx = row position)
+    soil1 = pd.Series({pid: (lst[0] if len(lst) > 0 else "") for pid, lst in results.items()})
+    soil2 = pd.Series({pid: (lst[1] if len(lst) > 1 else "") for pid, lst in results.items()})
+    soil3 = pd.Series({pid: (lst[2] if len(lst) > 2 else "") for pid, lst in results.items()})
+
+    p["soil_1"] = soil1.reindex(range(len(p))).fillna("").values
+    p["soil_2"] = soil2.reindex(range(len(p))).fillna("").values
+    p["soil_3"] = soil3.reindex(range(len(p))).fillna("").values
+
+    covered = (p["soil_1"] != "").sum()
+    print(f"  Soil overlay complete — {covered} of {len(p)} parcels matched soil data")
+    return p
+
+
 def add_net_developable(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
     net_dev_acres = gross acres minus flood and wetland overlap.

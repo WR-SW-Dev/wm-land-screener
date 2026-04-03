@@ -107,28 +107,28 @@ GRAND_HAVEN_ZONING = {
     # Residential — densities verified against Chapter 40 (Municode, Jan 2026)
     # density_confirmed=True: explicitly stated in ordinance
     # density_confirmed=False: implied from min lot area; see data/ordinance/grand_haven_zoning.json
-    "LDR":  {"label": "Low Density Residential",       "max_units_per_acre": 5},   # implied: 8,700 sqft/unit
-    "MDR":  {"label": "Moderate Density Residential",  "max_units_per_acre": 7},   # implied: 5,900 sqft/unit (Sec. 40-404 confirmed 5,900; summary table shows 5,800 — use detailed section)
-    "MFR":  {"label": "Multiple Family Residential",   "max_units_per_acre": 30},  # confirmed: 30 u/a or 12/structure
-    "DR":   {"label": "Dune Residential",              "max_units_per_acre": 3},   # implied: 10,500 sqft/unit; Critical Dune constraints
-    "NS":   {"label": "North Shore",                   "max_units_per_acre": 4},   # implied: 10,500 sqft/unit
+    "LDR":  {"label": "Low Density Residential",       "max_units_per_acre": 5,  "mf_units_per_acre": 5},    # SF: 8,700 sqft min lot; MF: same
+    "MDR":  {"label": "Moderate Density Residential",  "max_units_per_acre": 7,  "mf_units_per_acre": 7},    # SF: 5,900 sqft min lot; MF: same
+    "MFR":  {"label": "Multiple Family Residential",   "max_units_per_acre": 5,  "mf_units_per_acre": 30},   # SF: 9,000 sqft min lot; MF: 30 u/ac confirmed
+    "DR":   {"label": "Dune Residential",              "max_units_per_acre": 3,  "mf_units_per_acre": 3},    # SF/MF: same; Critical Dune constraints
+    "NS":   {"label": "North Shore",                   "max_units_per_acre": 4,  "mf_units_per_acre": 4},    # SF/MF: same
     # Mixed use / neighborhood districts
-    "NMU":  {"label": "Neighborhood Mixed Use",        "max_units_per_acre": 20},  # confirmed: 20 u/a or 6/structure
-    "OS":   {"label": "Office Service",                "max_units_per_acre": 20},  # confirmed: 20 u/a or 6/structure
-    "OT":   {"label": "Old Town",                      "max_units_per_acre": 7},   # implied: 5,900 sqft/unit
-    "S":    {"label": "Southside",                     "max_units_per_acre": 7},   # implied: 5,900 sqft/unit
-    "E":    {"label": "Eastown",                       "max_units_per_acre": 7},   # implied: 5,900 sqft/unit
-    # Commercial with residential potential
-    "CB":   {"label": "Central Business",              "max_units_per_acre": 30},  # estimated — no explicit cap found
-    "C":    {"label": "Commercial",                    "max_units_per_acre": 10},  # estimated — no explicit cap found
-    "B":    {"label": "Beechtree",                     "max_units_per_acre": 8},   # estimated — no explicit cap found
-    "WF2":  {"label": "Waterfront 2",                  "max_units_per_acre": 12},  # estimated — no explicit cap found
-    "PD":   {"label": "Planned Development",           "max_units_per_acre": 20},  # guidance: 1,000 sqft/unit land area; 50% coverage cap → ~20 practical
+    "NMU":  {"label": "Neighborhood Mixed Use",        "max_units_per_acre": 5,  "mf_units_per_acre": 20},   # SF: 9,000 sqft min lot; MF: 20 u/ac confirmed
+    "OS":   {"label": "Office Service",                "max_units_per_acre": 5,  "mf_units_per_acre": 20},   # SF: 9,000 sqft min lot; MF: 20 u/ac confirmed
+    "OT":   {"label": "Old Town",                      "max_units_per_acre": 7,  "mf_units_per_acre": 7},    # SF/MF: same; 5,900 sqft min lot
+    "S":    {"label": "Southside",                     "max_units_per_acre": 7,  "mf_units_per_acre": 7},    # SF/MF: same
+    "E":    {"label": "Eastown",                       "max_units_per_acre": 7,  "mf_units_per_acre": 7},    # SF/MF: same
+    # Commercial zones
+    "CB":   {"label": "Central Business",              "max_units_per_acre": 0,  "mf_units_per_acre": 30},   # SF: not viable; MF: estimated 30 u/ac
+    "C":    {"label": "Commercial",                    "max_units_per_acre": 0,  "mf_units_per_acre": 10},   # SF: not viable; MF: estimated 10 u/ac
+    "B":    {"label": "Beechtree",                     "max_units_per_acre": 0,  "mf_units_per_acre": 8},    # SF: not viable; MF: estimated 8 u/ac
+    "WF2":  {"label": "Waterfront 2",                  "max_units_per_acre": 0,  "mf_units_per_acre": 12},   # SF: not viable; MF: estimated 12 u/ac
+    "PD":   {"label": "Planned Development",           "max_units_per_acre": 20, "mf_units_per_acre": 20},   # SF/MF: same; case-by-case
     # Non-residential
-    "WF":   {"label": "Waterfront",                    "max_units_per_acre": 0},   # no residential uses in WF land use table
-    "TI":   {"label": "Transitional Industrial",       "max_units_per_acre": 0},
-    "I":    {"label": "Industrial",                    "max_units_per_acre": 0},
-    "CC":   {"label": "Civic Center",                  "max_units_per_acre": 0},
+    "WF":   {"label": "Waterfront",                    "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "TI":   {"label": "Transitional Industrial",       "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "I":    {"label": "Industrial",                    "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "CC":   {"label": "Civic Center",                  "max_units_per_acre": 0,  "mf_units_per_acre": 0},
 }
 
 # ── Grand Haven Township zoning density lookup ────────────────────────────────
@@ -149,43 +149,31 @@ GH_TOWNSHIP_ZONING = {
     # Large-scale rule: 9+ units (8+ apartments) in RR/R-1/R-2 MUST be PUD (Sec. 14.01).
 
     # Agricultural / rural — no residential development pathway to ≥3 u/ac
-    "AG":   {"label": "Agricultural",                         "max_units_per_acre": 0},   # 20 ac min; incidental residential only
-    "RP":   {"label": "Rural Preserve",                       "max_units_per_acre": 0},   # 5 ac min; 0.2 u/ac; no path to ≥3
-    "RR":   {"label": "Rural Residential",                    "max_units_per_acre": 1},   # 45,000 sqft min; 0.97 u/ac; PUD max 1.2 u/ac — below threshold
-    # Residential
-    # R-1: 15,000 sqft min → 2.9 u/ac (floor → 2); PUD density bonus → 3.6 u/ac on ≥5 ac
-    "R-1":  {"label": "Single Family Residential",            "max_units_per_acre": 2},
-    # R-2: 13,000 sqft min → 3.35 u/ac (floor → 3); duplexes by right; ≥3 u/ac
-    "R-2":  {"label": "Single Family and Two-Family Residential", "max_units_per_acre": 3},
-    # R-3: explicit 1 unit/3,250 sqft → 13.4 u/ac; MF by right
-    "R-3":  {"label": "Multiple Family Residential",          "max_units_per_acre": 13},
-    # R-4: 5,000 sqft/unit → 8.7 u/ac; manufactured housing only
-    "R-4":  {"label": "Manufactured Housing Park",            "max_units_per_acre": 8},
-    # PUD: site-specific; density governed by PUD Agreement
-    "PUD":  {"label": "Planned Unit Development",             "max_units_per_acre": 12},
-    # Commercial — residential as SLU (upper floors) only
-    "C-1":  {"label": "Neighborhood Commercial",              "max_units_per_acre": 0},
-    "C-2":  {"label": "Regional Commercial",                  "max_units_per_acre": 0},
-    # Industrial
-    "I-1":  {"label": "Industrial",                           "max_units_per_acre": 0},
-    # ── Codes from neighboring municipalities appearing in Ottawa County GIS bbox ──
-    # These are NOT Grand Haven Township codes — they belong to Spring Lake, Ferrysburg,
-    # or Grand Haven City parcels that fall within the township bounding box.
-    # Set to 0 so they fail the density hard filter and are excluded from results.
-    "SFR":  {"label": "SFR (external municipality — not GHT)", "max_units_per_acre": 0},
-    "RG1":  {"label": "RG1 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "RG2":  {"label": "RG2 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "RG3":  {"label": "RG3 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "SAO":  {"label": "SAO (external municipality — not GHT)", "max_units_per_acre": 0},
-    "IL-O": {"label": "IL-O (external municipality — not GHT)", "max_units_per_acre": 0},
-    "A-1":  {"label": "A-1 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "A-2":  {"label": "A-2 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "C-3":  {"label": "C-3 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "M-1":  {"label": "M-1 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "M-2":  {"label": "M-2 (external municipality — not GHT)", "max_units_per_acre": 0},
-    "RM":   {"label": "RM (external municipality — not GHT)",  "max_units_per_acre": 0},
-    "OS":   {"label": "OS (external municipality — not GHT)",  "max_units_per_acre": 0},
-    "P":    {"label": "P (external municipality — not GHT)",   "max_units_per_acre": 0},
+    "AG":   {"label": "Agricultural",                         "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "RP":   {"label": "Rural Preserve",                       "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "RR":   {"label": "Rural Residential",                    "max_units_per_acre": 1,  "mf_units_per_acre": 1},
+    "R-1":  {"label": "Single Family Residential",            "max_units_per_acre": 2,  "mf_units_per_acre": 2},
+    "R-2":  {"label": "Single Family and Two-Family Residential", "max_units_per_acre": 3, "mf_units_per_acre": 3},
+    "R-3":  {"label": "Multiple Family Residential",          "max_units_per_acre": 13, "mf_units_per_acre": 13},  # explicit formula; same for SF/MF
+    "R-4":  {"label": "Manufactured Housing Park",            "max_units_per_acre": 8,  "mf_units_per_acre": 8},
+    "PUD":  {"label": "Planned Unit Development",             "max_units_per_acre": 12, "mf_units_per_acre": 12},
+    "C-1":  {"label": "Neighborhood Commercial",              "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "C-2":  {"label": "Regional Commercial",                  "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "I-1":  {"label": "Industrial",                           "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "SFR":  {"label": "SFR (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "RG1":  {"label": "RG1 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "RG2":  {"label": "RG2 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "RG3":  {"label": "RG3 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "SAO":  {"label": "SAO (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "IL-O": {"label": "IL-O (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "A-1":  {"label": "A-1 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "A-2":  {"label": "A-2 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "C-3":  {"label": "C-3 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "M-1":  {"label": "M-1 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "M-2":  {"label": "M-2 (external municipality — not GHT)", "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "RM":   {"label": "RM (external municipality — not GHT)",  "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "OS":   {"label": "OS (external municipality — not GHT)",  "max_units_per_acre": 0, "mf_units_per_acre": 0},
+    "P":    {"label": "P (external municipality — not GHT)",   "max_units_per_acre": 0, "mf_units_per_acre": 0},
 }
 
 # ── Spring Lake Township zoning density lookup ────────────────────────────────
@@ -199,26 +187,19 @@ SPRING_LAKE_TWP_ZONING = {
     # 8+ lot developments in RR/R-1/R-2/R-3/R-4 must proceed as PUD (Section 332).
 
     # Agricultural / Rural — no residential development pathway
-    "AG":   {"label": "Agricultural",                         "max_units_per_acre": 0},
-    "RR":   {"label": "Rural Residential",                    "max_units_per_acre": 0},
-    # Residential (with-sewer densities — development assumption)
-    # R-1: 15,000 sqft min → 2.9 u/ac (floor → 2); PUD w/ density bonus → 3.6 u/ac
-    "R-1":  {"label": "Low Density Residential-Resource",     "max_units_per_acre": 2},
-    # R-2: 12,000 sqft min → 3.6 u/ac (floor → 3); by right ≥3 u/ac threshold
-    "R-2":  {"label": "Medium Density Residential-Suburban",  "max_units_per_acre": 3},
-    # R-3: 12,000 sqft min → 3.6 u/ac (floor → 3); cottage district (Strawberry Point)
-    "R-3":  {"label": "Medium Density Residential-Cottage",   "max_units_per_acre": 3},
-    # R-4: 3,500 sqft/DU → 12.4 u/ac; MF by right
-    "R-4":  {"label": "High Density Residential",             "max_units_per_acre": 12},
-    # Commercial with residential
-    "NC":   {"label": "Neighborhood Commercial",              "max_units_per_acre": 12},  # MF by right; R-4 density proxy — unconfirmed
-    "MU":   {"label": "Mixed Use Commercial",                 "max_units_per_acre": 12},  # MF by right; 3,500 sqft/DU = ~12.4 u/ac
-    # Non-residential
-    "GC":   {"label": "General Commercial",                   "max_units_per_acre": 0},
-    "LI":   {"label": "Light Industrial",                     "max_units_per_acre": 0},
-    "I":    {"label": "Industrial",                           "max_units_per_acre": 0},
-    "PR":   {"label": "Public/Recreation",                    "max_units_per_acre": 0},
-    "MH":   {"label": "Mobile Home District",                 "max_units_per_acre": 0},   # state-regulated
+    "AG":   {"label": "Agricultural",                         "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "RR":   {"label": "Rural Residential",                    "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "R-1":  {"label": "Low Density Residential-Resource",     "max_units_per_acre": 2,  "mf_units_per_acre": 2},
+    "R-2":  {"label": "Medium Density Residential-Suburban",  "max_units_per_acre": 3,  "mf_units_per_acre": 3},
+    "R-3":  {"label": "Medium Density Residential-Cottage",   "max_units_per_acre": 3,  "mf_units_per_acre": 3},
+    "R-4":  {"label": "High Density Residential",             "max_units_per_acre": 0,  "mf_units_per_acre": 12},  # SF: no standard; MF: 3,500 sqft/DU
+    "NC":   {"label": "Neighborhood Commercial",              "max_units_per_acre": 0,  "mf_units_per_acre": 12},  # SF: not viable; MF: R-4 proxy
+    "MU":   {"label": "Mixed Use Commercial",                 "max_units_per_acre": 0,  "mf_units_per_acre": 12},  # SF: not viable; MF: 3,500 sqft/DU
+    "GC":   {"label": "General Commercial",                   "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "LI":   {"label": "Light Industrial",                     "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "I":    {"label": "Industrial",                           "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "PR":   {"label": "Public/Recreation",                    "max_units_per_acre": 0,  "mf_units_per_acre": 0},
+    "MH":   {"label": "Mobile Home District",                 "max_units_per_acre": 0,  "mf_units_per_acre": 0},
 }
 
 # ── Ottawa County Master Plan FLU lookup ─────────────────────────────────────

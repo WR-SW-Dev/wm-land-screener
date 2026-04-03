@@ -26,6 +26,9 @@ secrets.json
 credentials.json
 credentials.yaml        # user logins — NEVER commit this
 
+# ── Claude Code local settings ────────────────────────────────────────────────
+.claude/settings.local.json
+
 # ── OS / editor ───────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

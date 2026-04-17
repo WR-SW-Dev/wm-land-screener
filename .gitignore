@@ -25,6 +25,7 @@ build/
 secrets.json
 credentials.json
 credentials.yaml        # user logins — NEVER commit this
+*.pem                   # SSH key pairs — NEVER commit this
 
 # ── Claude Code local settings ────────────────────────────────────────────────
 .claude/settings.local.json

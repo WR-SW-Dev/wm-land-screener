@@ -5,7 +5,6 @@ import pandas as pd
 import geopandas as gpd
 
 from config import (
-    MIN_ACRES,
     MAX_FLOOD_PCT,
     WETLAND_PENALTY_PCT,
     VACANT_USE_CODES,
@@ -16,10 +15,12 @@ from ordinance import load_ordinance, get_review_flags, ordinance_url
 
 # ── Zoning lookup ─────────────────────────────────────────────────────────────
 
-def get_max_density(zone_code: str, zoning_table: dict = None) -> int:
+def get_max_density(zone_code: str, zoning_table: dict = None,
+                    density_field: str = "max_units_per_acre") -> int:
     """
-    Return max units/acre for a zone code using the provided zoning table.
-    Falls back to GRAND_HAVEN_ZONING when no table is supplied (backwards compatibility).
+    Return density for a zone code using the provided zoning table.
+    density_field: "max_units_per_acre" (SF, default) or "mf_units_per_acre" (MF).
+    Falls back to GRAND_HAVEN_ZONING when no table is supplied.
     Returns 0 for unknown or non-residential zones.
     """
     table = zoning_table if zoning_table is not None else GRAND_HAVEN_ZONING
@@ -27,10 +28,10 @@ def get_max_density(zone_code: str, zoning_table: dict = None) -> int:
         return 0
     # Exact match first, then prefix match (e.g. "R-2A" → "R-2")
     if zone_code in table:
-        return table[zone_code]["max_units_per_acre"]
+        return table[zone_code].get(density_field, table[zone_code].get("max_units_per_acre", 0))
     for key in table:
         if zone_code.startswith(key):
-            return table[key]["max_units_per_acre"]
+            return table[key].get(density_field, table[key].get("max_units_per_acre", 0))
     return 0
 
 
@@ -48,24 +49,16 @@ def get_zone_label(zone_code: str, zoning_table: dict = None) -> str:
 
 # ── Hard filters ──────────────────────────────────────────────────────────────
 
-def apply_hard_filters(parcels: gpd.GeoDataFrame,
-                        min_acres: float = None) -> gpd.GeoDataFrame:
+def apply_hard_filters(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
     Mark each parcel as feasible (pass=True) or not.
     Adds a 'filter_reason' column explaining the first failure.
-    min_acres overrides the global MIN_ACRES when provided (e.g. per-city override).
     """
-    threshold = min_acres if min_acres is not None else MIN_ACRES
     p = parcels.copy()
     p["pass_filter"] = True
     p["filter_reason"] = ""
 
-    # 1. Minimum size
-    small = p["calc_acres"] < threshold
-    p.loc[small & p["pass_filter"], "filter_reason"] = f"Too small (<{threshold} acres)"
-    p.loc[small, "pass_filter"] = False
-
-    # 2. Floodplain coverage
+    # 1. Floodplain coverage
     if "flood_pct" in p.columns:
         flooded = p["flood_pct"] > MAX_FLOOD_PCT
         p.loc[flooded & p["pass_filter"], "filter_reason"] = (
@@ -138,22 +131,20 @@ def _find_col(df: pd.DataFrame, candidates: list):
 # Scoring component definitions — single source of truth used by both the
 # scoring logic and the UI methodology table.
 SCORE_COMPONENTS = [
-    {"key": "pts_density",   "label": "Zoning density",     "max": 30,
-     "description": "Units/acre allowed by zoning. Max credit at 30 u/ac."},
-    {"key": "pts_size",      "label": "Parcel size",         "max": 25,
-     "description": "Full credit for 1–5 net dev acres; declines gently above 5."},
-    {"key": "pts_wetland",   "label": "Wetland coverage",    "max": 20,
+    {"key": "pts_density",   "label": "Zoning density",     "max": 40,
+     "description": "Single-family units/acre allowed by zoning. Full credit at 7 u/ac (realistic SF ceiling). Anything above 7 is capped at 40 pts."},
+    {"key": "pts_rezoning",  "label": "Rezoning potential",  "max": 20,
+     "description": (
+         "Master plan future land use shows higher density than current zoning. "
+         "Scales 0–20 pts based on the density gap (full credit at +15 u/ac upside). "
+         "Only awarded when FLU data is available; 0 pts when not loaded."
+     )},
+    {"key": "pts_wetland",   "label": "Wetland coverage",    "max": 15,
      "description": "Full credit ≤10% wetland. Scales to 0 at 50% coverage."},
     {"key": "pts_flood",     "label": "Floodplain coverage", "max": 15,
      "description": "Full credit at 0% flood. Scales to 0 at the 25% hard-filter ceiling."},
-    {"key": "pts_permitted", "label": "Permitted uses",      "max": 10,
-     "description": "+6 if MF explicitly permitted, +4 if ADU permitted per zoning layer."},
-    {"key": "pts_rezoning",  "label": "Rezoning potential",  "max": 10,
-     "description": (
-         "Master plan future land use shows higher density than current zoning. "
-         "Scales 0–10 pts based on the density gap (full credit at +15 u/ac upside). "
-         "Only awarded when FLU data is available; 0 pts when not loaded."
-     )},
+    {"key": "pts_shape",     "label": "Parcel shape",        "max": 10,
+     "description": "How square/compact the parcel is. Higher score = more rectangular and development-friendly. Lower score = skinny, irregular, or oddly shaped."},
 ]
 
 
@@ -162,56 +153,42 @@ def score_components(row: pd.Series) -> dict:
     Return each scoring component's earned points as a dict keyed by pts_* name.
     Called for parcels that pass hard filters.
     """
-    # 1. Zoning density (0-30 pts)
+    # 1. Zoning density (0-40 pts) — SF mode: full credit at 7 u/ac (realistic SF ceiling)
     max_density = row.get("max_units_per_acre", 0)
-    pts_density = round(min(max_density / 30, 1.0) * 30, 1)
+    pts_density = round(min(max_density / 7, 1.0) * 40, 1)
 
-    # 2. Parcel size (0-25 pts)  sweet spot: 1-5 net dev acres
-    acres = row.get("net_dev_acres", row.get("calc_acres", 0))
-    if acres < 1:
-        size_frac = acres / 1.0
-    elif acres <= 5:
-        size_frac = 1.0
+    # 2. Rezoning potential (0-20 pts) — only when FLU data is present
+    flu_code       = str(row.get("future_lu_code", "")).strip()
+    rezoning_delta = float(row.get("rezoning_delta", 0) or 0)
+    if flu_code and rezoning_delta > 0:
+        pts_rezoning = round(min(rezoning_delta / 15.0, 1.0) * 20, 1)
     else:
-        size_frac = max(0.0, 1 - (acres - 5) / 20)
-    pts_size = round(size_frac * 25, 1)
+        pts_rezoning = 0.0
 
-    # 3. Wetland coverage (0-20 pts)
+    # 3. Wetland coverage (0-15 pts)
     wetland_pct = row.get("wetland_pct", 0)
     if wetland_pct <= WETLAND_PENALTY_PCT:
         wet_frac = 1.0
     else:
         wet_frac = max(0.0, 1 - (wetland_pct - WETLAND_PENALTY_PCT) / 0.4)
-    pts_wetland = round(wet_frac * 20, 1)
+    pts_wetland = round(wet_frac * 15, 1)
 
     # 4. Floodplain coverage (0-15 pts)
     flood_pct = row.get("flood_pct", 0)
     pts_flood = round(max(0.0, 1 - flood_pct / MAX_FLOOD_PCT) * 15, 1)
 
-    # 5. Permitted use bonus (0-10 pts)
-    mf_ok  = str(row.get("mf_permitted",  "")).strip().upper() in ("YES", "Y", "P", "1")
-    adu_ok = str(row.get("adu_permitted", "")).strip().upper() in ("YES", "Y", "P", "1")
-    pts_permitted = (6 if mf_ok else 0) + (4 if adu_ok else 0)
-
-    # 6. Rezoning potential (0-10 pts) — only when FLU data is present
-    # A parcel master-planned for higher density than its current zoning earns
-    # bonus points scaling with the density gap (+15 u/ac upside → 10 pts).
-    # 0 pts when future_lu_code is blank (no FLU data loaded) so existing
-    # scores are unchanged until the master plan layer is available.
-    flu_code       = str(row.get("future_lu_code", "")).strip()
-    rezoning_delta = float(row.get("rezoning_delta", 0) or 0)
-    if flu_code and rezoning_delta > 0:
-        pts_rezoning = round(min(rezoning_delta / 15.0, 1.0) * 10, 1)
-    else:
-        pts_rezoning = 0.0
+    # 5. Parcel shape compactness (0-10 pts)
+    # Uses the isoperimetric quotient: 4π × area / perimeter²
+    # Perfect square ≈ 0.785, circle = 1.0. We normalize so a square scores ~10.
+    shape_score = float(row.get("shape_score", 0) or 0)
+    pts_shape = round(min(shape_score, 1.0) * 10, 1)
 
     return {
         "pts_density":   pts_density,
-        "pts_size":      pts_size,
+        "pts_rezoning":  pts_rezoning,
         "pts_wetland":   pts_wetland,
         "pts_flood":     pts_flood,
-        "pts_permitted": float(pts_permitted),
-        "pts_rezoning":  pts_rezoning,
+        "pts_shape":     pts_shape,
     }
 
 
@@ -278,8 +255,8 @@ def _classify_dev_pathway(row: pd.Series, ordinance: dict,
     return "Not viable"
 
 
-def add_scores(parcels: gpd.GeoDataFrame, min_acres: float = None,
-               zoning_table: dict = None, city_key: str = None) -> gpd.GeoDataFrame:
+def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
+               city_key: str = None) -> gpd.GeoDataFrame:
     """
     Add max_units_per_acre, zone_label, density estimates, score, score components,
     review flags, and ordinance URLs.
@@ -292,7 +269,10 @@ def add_scores(parcels: gpd.GeoDataFrame, min_acres: float = None,
     p = parcels.copy()
 
     p["max_units_per_acre"] = p["zone_code"].apply(
-        lambda z: get_max_density(z, zoning_table)
+        lambda z: get_max_density(z, zoning_table, "max_units_per_acre")
+    )
+    p["mf_max_units_per_acre"] = p["zone_code"].apply(
+        lambda z: get_max_density(z, zoning_table, "mf_units_per_acre")
     )
     p["zone_label"] = p["zone_code"].apply(
         lambda z: get_zone_label(z, zoning_table)
@@ -326,7 +306,7 @@ def add_scores(parcels: gpd.GeoDataFrame, min_acres: float = None,
     )
 
     # ── Hard filters (includes "Not viable" pathway check) ────────────────────
-    p = apply_hard_filters(p, min_acres=min_acres)
+    p = apply_hard_filters(p)
 
     # Score + per-component breakdown for passing parcels only
     mask = p["pass_filter"]

@@ -8,6 +8,8 @@ import requests
 import geopandas as gpd
 import pandas as pd
 from pathlib import Path
+import io
+import shapely.ops
 from shapely.geometry import box, shape, Polygon
 
 from config import (
@@ -291,6 +293,112 @@ out skel qt;
     gdf.to_file(cache, driver="GeoJSON")
     print(f"  Saved {len(gdf)} building footprints to {cache.name}")
     return gdf
+
+
+# ── USDA NRCS Soil Data (SSURGO via Soil Data Access) ────────────────────────
+
+SDA_URL = "https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest"
+
+_NRCS_WFS_URL = "https://sdmdataaccess.sc.egov.usda.gov/Spatial/SDMNAD83Geographic.wfs"
+
+def load_soils(bbox: tuple, city_key: str, force_download: bool = False) -> gpd.GeoDataFrame:
+    """
+    Fetch SSURGO soil map unit polygons for the bbox.
+
+    Two-step process:
+      1. NRCS WFS endpoint  → soil polygon geometry (mukey + geometry)
+      2. SDA tabular query  → soil attributes (muname, drainagecl, hydricrating)
+    Merged on mukey and cached to data/raw/<city_key>_soils.geojson.
+
+    Returns a GeoDataFrame in EPSG:4326 with columns:
+      mukey, muname, drainagecl, hydricrating, geometry
+    Each row is one polygon fragment (a mukey may appear in multiple rows
+    if the soil unit is non-contiguous across the landscape).
+    """
+    cache = DATA_RAW / f"{city_key}_soils.geojson"
+
+    if cache.exists() and not force_download:
+        print(f"  Loading soils from cache: {cache.name}")
+        return gpd.read_file(cache)
+
+    print(f"  Downloading USDA NRCS soil data for {city_key} ...")
+    min_lon, min_lat, max_lon, max_lat = bbox
+
+    # ── Step 1: Polygon geometry via NRCS WFS ─────────────────────────────────
+    # The WFS returns GML with coordinates in (lat, lon) order — we flip below.
+    wfs_params = {
+        "SERVICE":  "WFS",
+        "VERSION":  "1.1.0",
+        "REQUEST":  "GetFeature",
+        "TYPENAME": "MapunitPoly",
+        "BBOX":     f"{min_lon},{min_lat},{max_lon},{max_lat}",
+    }
+    try:
+        wfs_resp = requests.get(_NRCS_WFS_URL, params=wfs_params, timeout=60)
+        wfs_resp.raise_for_status()
+        geo_gdf = gpd.read_file(io.BytesIO(wfs_resp.content))
+    except Exception as e:
+        print(f"  [warn] NRCS WFS soil geometry request failed: {e}")
+        return gpd.GeoDataFrame()
+
+    if geo_gdf.empty:
+        print("  [info] No soil polygons returned from NRCS WFS for this area")
+        return gpd.GeoDataFrame()
+
+    # GML WFS returns coordinates in (lat, lon) order; flip to (lon, lat) / EPSG:4326
+    geo_gdf["geometry"] = geo_gdf["geometry"].map(
+        lambda g: shapely.ops.transform(lambda x, y, *args: (y, x), g)
+    )
+    geo_gdf = geo_gdf.set_crs("EPSG:4326")
+    geo_gdf = geo_gdf[["mukey", "geometry"]].copy()
+    geo_gdf["mukey"] = geo_gdf["mukey"].astype(str)
+
+    # ── Step 2: Attributes via SDA tabular query ──────────────────────────────
+    mukeys = ",".join(geo_gdf["mukey"].unique().tolist())
+    attr_query = f"""
+SELECT mu.mukey, mu.muname, co.drainagecl, co.hydricrating
+FROM mapunit mu
+LEFT JOIN component co ON co.mukey = mu.mukey AND co.majcompflag = 'Yes'
+WHERE mu.mukey IN ({mukeys})
+"""
+    try:
+        attr_resp = requests.post(
+            SDA_URL,
+            data={"query": attr_query, "format": "json+columnname+metadata"},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            timeout=30,
+        )
+        attr_resp.raise_for_status()
+        attr_data = attr_resp.json()
+    except Exception as e:
+        print(f"  [warn] SDA soil attributes query failed: {e}")
+        return gpd.GeoDataFrame()
+
+    table = attr_data.get("Table", [])
+    # table[0] = column names, table[1] = type metadata, table[2:] = data rows
+    if len(table) < 3:
+        print("  [info] No soil attributes returned from SDA")
+        return gpd.GeoDataFrame()
+
+    attr_df = pd.DataFrame(
+        table[2:], columns=["mukey", "muname", "drainagecl", "hydricrating"]
+    )
+    attr_df["mukey"] = attr_df["mukey"].astype(str)
+    # Rare edge case: multiple major components per mukey — keep first
+    attr_df = attr_df.drop_duplicates(subset=["mukey"])
+
+    # ── Step 3: Merge geometry + attributes ───────────────────────────────────
+    merged = geo_gdf.merge(attr_df, on="mukey", how="left")
+    merged["muname"]      = merged["muname"].fillna("Unknown")
+    merged["drainagecl"]  = merged["drainagecl"].fillna("Unknown")
+    merged["hydricrating"] = merged["hydricrating"].fillna("Unknown")
+
+    merged.to_file(cache, driver="GeoJSON")
+    print(
+        f"  Saved {len(merged)} soil polygons "
+        f"({merged['mukey'].nunique()} map units) to {cache.name}"
+    )
+    return merged
 
 
 # ── Future Land Use (master plan) ─────────────────────────────────────────────

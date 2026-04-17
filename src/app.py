@@ -3,8 +3,10 @@ West Michigan Vacant Land Screener — Streamlit UI
 Run with:  streamlit run src/app.py
 """
 
+import json
 import sys
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import folium
@@ -19,8 +21,8 @@ from streamlit_folium import st_folium
 # ── Path setup ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
-from config import CITIES, OUTPUT_DIR, MIN_ACRES  # noqa: E402
-from scoring import SCORE_COMPONENTS               # noqa: E402
+from config import CITIES, OUTPUT_DIR, MIN_ACRES, MAX_FLOOD_PCT  # noqa: E402
+from scoring import SCORE_COMPONENTS                              # noqa: E402
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -72,6 +74,16 @@ COLOR_MED    = "#f59e0b"   # amber
 COLOR_LOW    = "#ef4444"   # red
 COLOR_STROKE = "#1e293b"   # dark border
 
+# Parcel tracker
+TRACKER_FILE   = ROOT / "data" / "tracker.json"
+STATUS_OPTIONS = ["Not contacted", "Pursuing", "Backburner", "No"]
+STATUS_COLORS  = {
+    "Not contacted": "#9ca3af",
+    "Pursuing":      "#22c55e",
+    "Backburner":    "#f59e0b",
+    "No":            "#ef4444",
+}
+
 # Development pathway badge colours
 PATHWAY_COLORS = {
     "By right":           "#22c55e",   # green  — no approval needed
@@ -83,6 +95,27 @@ PATHWAY_COLORS = {
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def load_tracker() -> dict:
+    """Load parcel tracker data from JSON file."""
+    try:
+        if TRACKER_FILE.exists():
+            return json.loads(TRACKER_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def save_tracker(updates: dict):
+    """Merge updates into tracker JSON and write back."""
+    TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = json.loads(TRACKER_FILE.read_text()) if TRACKER_FILE.exists() else {}
+    except Exception:
+        existing = {}
+    existing.update(updates)
+    TRACKER_FILE.write_text(json.dumps(existing, indent=2))
+
 
 def score_color(score: float) -> str:
     if score >= SCORE_HIGH:
@@ -134,7 +167,8 @@ def run_pipeline(city_key: str, force: bool = False):
             status.update(label="Pipeline failed — see output above", state="error")
 
 
-def make_map(gdf: gpd.GeoDataFrame, bbox: tuple) -> folium.Map:
+def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
+             mode_label: str = "Single-Family") -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     min_lon, min_lat, max_lon, max_lat = bbox
     center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
@@ -161,6 +195,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple) -> folium.Map:
         zone_l = row.get("zone_label", "") or ""
         u_con  = int(row.get("units_conservative", 0) or 0)
         u_opt  = int(row.get("units_optimistic",   0) or 0)
+        density_val = float(row.get("max_units_per_acre", 0) or 0)
         flood  = float(row.get("flood_pct",   0) or 0) * 100
         wet    = float(row.get("wetland_pct", 0) or 0) * 100
         mf     = row.get("mf_permitted",  "") or ""
@@ -173,6 +208,21 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple) -> folium.Map:
         flu_max   = int(row.get("future_max_units", 0) or 0)
         rezone_up = bool(row.get("rezoning_upside", False))
         rezone_delta = int(row.get("rezoning_delta", 0) or 0)
+        # Soil data
+        soil_1 = str(row.get("soil_1", "") or "")
+        soil_2 = str(row.get("soil_2", "") or "")
+        soil_3 = str(row.get("soil_3", "") or "")
+
+        # Tracker status badge
+        _pid = str(row.get("parcel_id", "") or "")
+        _trk = tracker.get(_pid, {})
+        _status = _trk.get("status", "Not contacted")
+        _notes  = _trk.get("notes", "")
+        _status_color = STATUS_COLORS.get(_status, "#9ca3af")
+        status_badge = (
+            f"<span style='background:{_status_color};color:#fff;font-size:11px;"
+            f"font-weight:600;padding:2px 8px;border-radius:10px;'>{_status}</span>"
+        )
 
         # Dev pathway badge
         p_color = PATHWAY_COLORS.get(pathway, "#9ca3af")
@@ -218,12 +268,16 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple) -> folium.Map:
 <div style="font-family:sans-serif;min-width:270px;font-size:13px;">
   <b style="font-size:15px;">{addr}</b><br>
   <span style="color:#555;">{owner}</span>
+  <div style="margin-top:5px;">{status_badge}</div>
+  {f"<div style='font-size:11px;color:#555;margin-top:3px;font-style:italic;'>{_notes}</div>" if _notes else ""}
   <hr style="margin:6px 0;">
   <table style="width:100%;border-collapse:collapse;line-height:1.7;">
     <tr><td style="color:#888;">Acres</td>
         <td colspan="2">{acres:.2f} gross / {net:.2f} net dev</td></tr>
     <tr><td style="color:#888;">Zone</td>
         <td colspan="2">{zone_c} — {zone_l}</td></tr>
+    <tr><td style="color:#888;">Density ({"MF" if mode_label == "Multifamily" else "SF"})</td>
+        <td colspan="2">{density_val:.0f} u/ac</td></tr>
     <tr><td style="color:#888;">Pathway</td>
         <td colspan="2">{pathway_badge}</td></tr>
     <tr><td style="color:#888;">Units</td>
@@ -237,6 +291,9 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple) -> folium.Map:
     <tr><td style="color:#888;">Buildings</td>
         <td colspan="2">{bldgs} footprint(s)</td></tr>
     {flu_row}
+    {f"<tr><td style='color:#888;'>Soil</td><td colspan='2'>{soil_1}</td></tr>" if soil_1 else ""}
+    {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_2}</td></tr>" if soil_2 else ""}
+    {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_3}</td></tr>" if soil_3 else ""}
   </table>
   <hr style="margin:6px 0;">
   <div style="font-weight:600;margin-bottom:4px;">
@@ -287,6 +344,19 @@ with st.sidebar:
     city_min  = city_cfg.get("min_acres", MIN_ACRES)
 
     st.divider()
+    dev_type = st.radio(
+        "Development type",
+        ["Single-Family", "Multifamily"],
+        horizontal=True,
+        help=(
+            "**Single-Family** — densities based on SF minimum lot standards. "
+            "Full score credit at 7 u/ac.\n\n"
+            "**Multifamily** — densities based on MF zoning caps. "
+            "Full score credit at 30 u/ac. Unlocks additional zones (MFR, NMU, OS, etc.)."
+        ),
+    )
+
+    st.divider()
     st.subheader("Display filters")
     st.caption("These filter the map view only — re-run the pipeline to change hard filters.")
 
@@ -320,6 +390,9 @@ with st.sidebar:
 
     # Development pathway filter
     pathway_placeholder = st.empty()
+
+    # Parcel tracker status filter
+    status_placeholder = st.empty()
 
     st.divider()
     st.subheader("🔮 Master plan data")
@@ -379,6 +452,7 @@ if refresh_btn:
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 df_all, gdf_qual = load_data(city_key)
+tracker = load_tracker()
 
 # ── Main content ──────────────────────────────────────────────────────────────
 st.title(f"🏗️ {city_cfg['label']} — Vacant Land Screener")
@@ -418,8 +492,50 @@ if "dev_pathway" in df_all.columns:
 else:
     selected_pathways = None
 
+# ── Tracker status filter (filled into sidebar placeholder) ───────────────────
+selected_statuses = status_placeholder.multiselect(
+    "Tracker status",
+    options=STATUS_OPTIONS,
+    default=STATUS_OPTIONS,
+    help="Filter qualifying parcels by their tracker status.",
+)
+
+# ── Apply development type mode ───────────────────────────────────────────────
+MF_DENSITY_COL = "mf_max_units_per_acre"
+USE_MF = (dev_type == "Multifamily") and (MF_DENSITY_COL in df_all.columns)
+
+if USE_MF:
+    # Refilter from all parcels using MF density — bypass the SF pass_filter
+    _exempt_col = next((c for c in ["class", "propclass", "prop_class", "propertyclass"]
+                        if c in df_all.columns), None)
+    _exempt_mask = (
+        df_all[_exempt_col].astype(str).str.strip().isin({"701"})
+        if _exempt_col else pd.Series(False, index=df_all.index)
+    )
+    _flood_mask   = df_all["flood_pct"].fillna(0) > MAX_FLOOD_PCT
+    _bldg_mask    = df_all["building_pct"].fillna(0) > 0.01 if "building_pct" in df_all.columns \
+                    else pd.Series(False, index=df_all.index)
+    _density_mask = df_all[MF_DENSITY_COL].fillna(0) < 3
+
+    _fail = _exempt_mask | _flood_mask | _bldg_mask | _density_mask
+    qual_all = df_all[~_fail].copy()
+
+    # Recompute density score and total score using MF density + MF ceiling (30 u/ac)
+    qual_all["max_units_per_acre"] = qual_all[MF_DENSITY_COL]
+    qual_all["pts_density"] = (qual_all[MF_DENSITY_COL] / 30).clip(upper=1.0).mul(40).round(1)
+    score_cols = ["pts_density", "pts_rezoning", "pts_wetland", "pts_flood", "pts_shape"]
+    existing   = [c for c in score_cols if c in qual_all.columns]
+    qual_all["score"] = qual_all[existing].fillna(0).sum(axis=1).clip(upper=100).round(1)
+
+    # Recompute unit estimates using MF density
+    net = qual_all["net_dev_acres"] if "net_dev_acres" in qual_all.columns \
+          else qual_all["calc_acres"]
+    qual_all["units_conservative"] = (net * qual_all[MF_DENSITY_COL] * 0.70).round(0).astype(int)
+    qual_all["units_optimistic"]   = (net * qual_all[MF_DENSITY_COL]).round(0).astype(int)
+else:
+    qual_all = df_all[df_all["pass_filter"] == True].copy()
+
 # ── Apply display filters to qualifying parcels ───────────────────────────────
-qual_all = df_all[df_all["pass_filter"] == True].copy()
 
 _building_mask = (
     qual_all["building_pct"].fillna(0) <= (max_building_pct_ui / 100)
@@ -433,13 +549,18 @@ _pathway_mask = (
     else pd.Series(True, index=qual_all.index)
 )
 
+_tracker_status_mask = qual_all["parcel_id"].astype(str).map(
+    lambda pid: tracker.get(pid, {}).get("status", "Not contacted")
+).isin(selected_statuses) if "parcel_id" in qual_all.columns else pd.Series(True, index=qual_all.index)
+
 qual_filtered = qual_all[
     (qual_all["score"]      >= min_score_ui) &
     (qual_all["calc_acres"] >= min_acres_ui) &
     (qual_all["flood_pct"]  <= max_flood_ui / 100) &
     (qual_all["zone_code"].isin(selected_zones)) &
     _building_mask &
-    _pathway_mask
+    _pathway_mask &
+    _tracker_status_mask
 ]
 
 # Filter GeoJSON to match
@@ -466,8 +587,19 @@ leg2.markdown(f"<span style='color:{COLOR_MED}'>⬛</span> Score {SCORE_MED}–{
 leg3.markdown(f"<span style='color:{COLOR_LOW}'>⬛</span> Score < {SCORE_MED}",
               unsafe_allow_html=True)
 
+# ── Merge MF-recomputed values into gdf_shown so popup reflects active mode ───
+if USE_MF and gdf_shown is not None and not gdf_shown.empty \
+        and "parcel_id" in qual_filtered.columns and "parcel_id" in gdf_shown.columns:
+    mf_merge_cols = ["parcel_id", "score", "max_units_per_acre",
+                     "units_conservative", "units_optimistic", "pts_density"]
+    mf_merge_cols = [c for c in mf_merge_cols if c in qual_filtered.columns]
+    drop_cols = [c for c in mf_merge_cols if c != "parcel_id" and c in gdf_shown.columns]
+    gdf_shown = gdf_shown.drop(columns=drop_cols)
+    gdf_shown = gdf_shown.merge(qual_filtered[mf_merge_cols], on="parcel_id", how="left")
+
 # ── Map ───────────────────────────────────────────────────────────────────────
-m = make_map(gdf_shown, city_cfg["bbox"])
+_mode_label_map = "Multifamily" if USE_MF else "Single-Family"
+m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map)
 st_folium(m, use_container_width=True, height=530, returned_objects=[])
 
 # ── Qualifying parcels table ──────────────────────────────────────────────────
@@ -479,6 +611,8 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         "dev_pathway",
         "max_units_per_acre", "units_conservative", "units_optimistic",
         "flood_pct", "wetland_pct",
+        "shape_score",
+        "soil_1", "soil_2", "soil_3",
         "building_count", "mf_permitted", "adu_permitted",
         # FLU columns (only shown when data is loaded — filtered below)
         "future_lu_label", "future_max_units", "rezoning_delta",
@@ -486,6 +620,19 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
     ]
     display_cols = [c for c in display_cols if c in qual_filtered.columns]
     fmt = qual_filtered[display_cols].copy()
+
+    # Format shape_score as a % (0–100%) and rename for clarity
+    if "shape_score" in fmt.columns:
+        fmt["shape_score"] = (fmt["shape_score"] * 100).round(0).astype(int).astype(str) + "%"
+        fmt = fmt.rename(columns={"shape_score": "Shape %"})
+
+    # Rename soil columns for readability
+    soil_rename = {"soil_1": "Dominant Soil", "soil_2": "Soil 2", "soil_3": "Soil 3"}
+    fmt = fmt.rename(columns={k: v for k, v in soil_rename.items() if k in fmt.columns})
+    # Drop Soil 2 / Soil 3 columns if entirely empty (keeps table clean when parcels have one soil)
+    for col in ["Soil 2", "Soil 3"]:
+        if col in fmt.columns and fmt[col].fillna("").eq("").all():
+            fmt = fmt.drop(columns=[col])
 
     # Rename review_flag column for readability
     if "review_flag" in fmt.columns:
@@ -498,11 +645,68 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         if col in fmt.columns:
             fmt[col] = (fmt[col] * 100).round(1).astype(str) + "%"
 
-    st.dataframe(
-        fmt.sort_values("score", ascending=False),
-        width="stretch",
+    # Add tracker columns
+    _pid_col = "parcel_id" if "parcel_id" in fmt.columns else None
+    if _pid_col:
+        fmt["Status"] = fmt[_pid_col].astype(str).map(
+            lambda pid: tracker.get(pid, {}).get("status", "Not contacted")
+        )
+        fmt["Notes"] = fmt[_pid_col].astype(str).map(
+            lambda pid: tracker.get(pid, {}).get("notes", "")
+        )
+        fmt["Reviewed ✓"] = fmt[_pid_col].astype(str).map(
+            lambda pid: bool(tracker.get(pid, {}).get("reviewed", False))
+        )
+
+    fmt_sorted = fmt.sort_values("score", ascending=False).reset_index(drop=True)
+
+    # Determine which columns are editable
+    _editable = {"Status", "Notes", "Reviewed ✓"} if _pid_col else set()
+    _disabled = [c for c in fmt_sorted.columns if c not in _editable]
+
+    edited = st.data_editor(
+        fmt_sorted,
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=STATUS_OPTIONS,
+                required=True,
+            ),
+            "Notes": st.column_config.TextColumn("Notes", width="large"),
+            "Reviewed ✓": st.column_config.CheckboxColumn(
+                "Reviewed ✓",
+                help="Check once you've manually reviewed this parcel.",
+                default=False,
+            ),
+        },
+        disabled=_disabled,
         hide_index=True,
+        use_container_width=True,
+        key=f"tracker_editor_{city_key}",
     )
+
+    # Detect changes and persist
+    if _pid_col and edited is not None:
+        updates = {}
+        for _, erow in edited.iterrows():
+            pid      = str(erow[_pid_col])
+            status   = erow.get("Status", "Not contacted")
+            notes    = erow.get("Notes", "") or ""
+            reviewed = bool(erow.get("Reviewed ✓", False))
+            old      = tracker.get(pid, {})
+            if (old.get("status", "Not contacted") != status
+                    or old.get("notes", "") != notes
+                    or bool(old.get("reviewed", False)) != reviewed):
+                updates[pid] = {
+                    "status":     status,
+                    "notes":      notes,
+                    "reviewed":   reviewed,
+                    "updated":    datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                    "updated_by": _username,
+                }
+        if updates:
+            save_tracker(updates)
+            tracker.update(updates)
 
     csv_bytes = qual_filtered.to_csv(index=False).encode()
     st.download_button(
@@ -511,6 +715,28 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         file_name=f"{city_key}_qualified_filtered.csv",
         mime="text/csv",
     )
+
+# ── Tracker summary ───────────────────────────────────────────────────────────
+if tracker:
+    with st.expander("📊 Parcel tracker summary", expanded=False):
+        st.caption("Counts across all parcels ever tracked (not filtered by current display).")
+        counts = {s: 0 for s in STATUS_OPTIONS}
+        for v in tracker.values():
+            s = v.get("status", "Not contacted")
+            if s in counts:
+                counts[s] += 1
+        summary_cols = st.columns(len(STATUS_OPTIONS))
+        for col_ui, status_name in zip(summary_cols, STATUS_OPTIONS):
+            sc = STATUS_COLORS[status_name]
+            col_ui.markdown(
+                f"<div style='background:{sc}18;border-left:4px solid {sc};"
+                f"border-radius:6px;padding:10px 12px;'>"
+                f"<div style='font-size:11px;color:{sc};font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.04em;'>{status_name}</div>"
+                f"<div style='font-size:26px;font-weight:800;color:#1e293b;'>{counts[status_name]}</div>"
+                f"<div style='font-size:11px;color:#64748b;'>parcels</div></div>",
+                unsafe_allow_html=True,
+            )
 
 # ── Per-parcel score breakdown ────────────────────────────────────────────────
 comp_keys = [c["key"] for c in SCORE_COMPONENTS]
@@ -705,17 +931,28 @@ if review_available:
 
 # ── Scoring methodology ───────────────────────────────────────────────────────
 with st.expander("📐 How scores are calculated"):
+    _mode_label = "Multifamily" if USE_MF else "Single-Family"
     st.markdown(
-        "Each qualifying parcel is scored **0–100** across five components. "
-        "Hard filters (size, flood, buildings, zoning) must pass first — "
+        f"Each qualifying parcel is scored **0–100** across five components "
+        f"in **{_mode_label}** mode. "
+        "Hard filters (flood, buildings, zoning) must pass first — "
         "parcels that fail any hard filter are excluded entirely and not scored."
+    )
+    # Density description varies by mode
+    _density_desc = (
+        "Multifamily units/acre allowed by zoning. Full credit at 30 u/ac "
+        "(e.g. MFR, NMU, OS zones). Based on MF zoning caps per ordinance."
+        if USE_MF else
+        "Single-family units/acre allowed by zoning. Full credit at 7 u/ac "
+        "(e.g. MDR, OT, S zones). Based on SF minimum lot area per ordinance."
     )
     methodology_rows = []
     for comp in SCORE_COMPONENTS:
+        desc = _density_desc if comp["key"] == "pts_density" else comp["description"]
         methodology_rows.append({
-            "Component":   comp["label"],
-            "Max points":  comp["max"],
-            "How it works": comp["description"],
+            "Component":    comp["label"],
+            "Max points":   comp["max"],
+            "How it works": desc,
         })
     st.dataframe(
         pd.DataFrame(methodology_rows),
@@ -724,7 +961,7 @@ with st.expander("📐 How scores are calculated"):
     )
     st.caption(
         "**Phase 2 additions planned:** tax delinquency flag (+pts), MLS listing status, "
-        "water/sewer availability, parcel shape efficiency."
+        "water/sewer availability."
     )
 
 # ── Filter breakdown ─────────────────────────────────────────────────────────

@@ -3,8 +3,10 @@ West Michigan Vacant Land Screener — Streamlit UI
 Run with:  streamlit run src/app.py
 """
 
+import json
 import sys
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 import folium
@@ -72,6 +74,16 @@ COLOR_MED    = "#f59e0b"   # amber
 COLOR_LOW    = "#ef4444"   # red
 COLOR_STROKE = "#1e293b"   # dark border
 
+# Parcel tracker
+TRACKER_FILE   = ROOT / "data" / "tracker.json"
+STATUS_OPTIONS = ["Not contacted", "Pursuing", "Backburner", "No"]
+STATUS_COLORS  = {
+    "Not contacted": "#9ca3af",
+    "Pursuing":      "#22c55e",
+    "Backburner":    "#f59e0b",
+    "No":            "#ef4444",
+}
+
 # Development pathway badge colours
 PATHWAY_COLORS = {
     "By right":           "#22c55e",   # green  — no approval needed
@@ -83,6 +95,27 @@ PATHWAY_COLORS = {
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def load_tracker() -> dict:
+    """Load parcel tracker data from JSON file."""
+    try:
+        if TRACKER_FILE.exists():
+            return json.loads(TRACKER_FILE.read_text())
+    except Exception:
+        pass
+    return {}
+
+
+def save_tracker(updates: dict):
+    """Merge updates into tracker JSON and write back."""
+    TRACKER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        existing = json.loads(TRACKER_FILE.read_text()) if TRACKER_FILE.exists() else {}
+    except Exception:
+        existing = {}
+    existing.update(updates)
+    TRACKER_FILE.write_text(json.dumps(existing, indent=2))
+
 
 def score_color(score: float) -> str:
     if score >= SCORE_HIGH:
@@ -180,6 +213,17 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         soil_2 = str(row.get("soil_2", "") or "")
         soil_3 = str(row.get("soil_3", "") or "")
 
+        # Tracker status badge
+        _pid = str(row.get("parcel_id", "") or "")
+        _trk = tracker.get(_pid, {})
+        _status = _trk.get("status", "Not contacted")
+        _notes  = _trk.get("notes", "")
+        _status_color = STATUS_COLORS.get(_status, "#9ca3af")
+        status_badge = (
+            f"<span style='background:{_status_color};color:#fff;font-size:11px;"
+            f"font-weight:600;padding:2px 8px;border-radius:10px;'>{_status}</span>"
+        )
+
         # Dev pathway badge
         p_color = PATHWAY_COLORS.get(pathway, "#9ca3af")
         pathway_badge = (
@@ -224,6 +268,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
 <div style="font-family:sans-serif;min-width:270px;font-size:13px;">
   <b style="font-size:15px;">{addr}</b><br>
   <span style="color:#555;">{owner}</span>
+  <div style="margin-top:5px;">{status_badge}</div>
+  {f"<div style='font-size:11px;color:#555;margin-top:3px;font-style:italic;'>{_notes}</div>" if _notes else ""}
   <hr style="margin:6px 0;">
   <table style="width:100%;border-collapse:collapse;line-height:1.7;">
     <tr><td style="color:#888;">Acres</td>
@@ -345,6 +391,9 @@ with st.sidebar:
     # Development pathway filter
     pathway_placeholder = st.empty()
 
+    # Parcel tracker status filter
+    status_placeholder = st.empty()
+
     st.divider()
     st.subheader("🔮 Master plan data")
     flu_file = (
@@ -403,6 +452,7 @@ if refresh_btn:
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 df_all, gdf_qual = load_data(city_key)
+tracker = load_tracker()
 
 # ── Main content ──────────────────────────────────────────────────────────────
 st.title(f"🏗️ {city_cfg['label']} — Vacant Land Screener")
@@ -441,6 +491,14 @@ if "dev_pathway" in df_all.columns:
     )
 else:
     selected_pathways = None
+
+# ── Tracker status filter (filled into sidebar placeholder) ───────────────────
+selected_statuses = status_placeholder.multiselect(
+    "Tracker status",
+    options=STATUS_OPTIONS,
+    default=STATUS_OPTIONS,
+    help="Filter qualifying parcels by their tracker status.",
+)
 
 # ── Apply development type mode ───────────────────────────────────────────────
 MF_DENSITY_COL = "mf_max_units_per_acre"
@@ -491,13 +549,18 @@ _pathway_mask = (
     else pd.Series(True, index=qual_all.index)
 )
 
+_tracker_status_mask = qual_all["parcel_id"].astype(str).map(
+    lambda pid: tracker.get(pid, {}).get("status", "Not contacted")
+).isin(selected_statuses) if "parcel_id" in qual_all.columns else pd.Series(True, index=qual_all.index)
+
 qual_filtered = qual_all[
     (qual_all["score"]      >= min_score_ui) &
     (qual_all["calc_acres"] >= min_acres_ui) &
     (qual_all["flood_pct"]  <= max_flood_ui / 100) &
     (qual_all["zone_code"].isin(selected_zones)) &
     _building_mask &
-    _pathway_mask
+    _pathway_mask &
+    _tracker_status_mask
 ]
 
 # Filter GeoJSON to match
@@ -582,11 +645,68 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         if col in fmt.columns:
             fmt[col] = (fmt[col] * 100).round(1).astype(str) + "%"
 
-    st.dataframe(
-        fmt.sort_values("score", ascending=False),
-        width="stretch",
+    # Add tracker columns
+    _pid_col = "parcel_id" if "parcel_id" in fmt.columns else None
+    if _pid_col:
+        fmt["Status"] = fmt[_pid_col].astype(str).map(
+            lambda pid: tracker.get(pid, {}).get("status", "Not contacted")
+        )
+        fmt["Notes"] = fmt[_pid_col].astype(str).map(
+            lambda pid: tracker.get(pid, {}).get("notes", "")
+        )
+        fmt["Reviewed ✓"] = fmt[_pid_col].astype(str).map(
+            lambda pid: bool(tracker.get(pid, {}).get("reviewed", False))
+        )
+
+    fmt_sorted = fmt.sort_values("score", ascending=False).reset_index(drop=True)
+
+    # Determine which columns are editable
+    _editable = {"Status", "Notes", "Reviewed ✓"} if _pid_col else set()
+    _disabled = [c for c in fmt_sorted.columns if c not in _editable]
+
+    edited = st.data_editor(
+        fmt_sorted,
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=STATUS_OPTIONS,
+                required=True,
+            ),
+            "Notes": st.column_config.TextColumn("Notes", width="large"),
+            "Reviewed ✓": st.column_config.CheckboxColumn(
+                "Reviewed ✓",
+                help="Check once you've manually reviewed this parcel.",
+                default=False,
+            ),
+        },
+        disabled=_disabled,
         hide_index=True,
+        use_container_width=True,
+        key=f"tracker_editor_{city_key}",
     )
+
+    # Detect changes and persist
+    if _pid_col and edited is not None:
+        updates = {}
+        for _, erow in edited.iterrows():
+            pid      = str(erow[_pid_col])
+            status   = erow.get("Status", "Not contacted")
+            notes    = erow.get("Notes", "") or ""
+            reviewed = bool(erow.get("Reviewed ✓", False))
+            old      = tracker.get(pid, {})
+            if (old.get("status", "Not contacted") != status
+                    or old.get("notes", "") != notes
+                    or bool(old.get("reviewed", False)) != reviewed):
+                updates[pid] = {
+                    "status":     status,
+                    "notes":      notes,
+                    "reviewed":   reviewed,
+                    "updated":    datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                    "updated_by": _username,
+                }
+        if updates:
+            save_tracker(updates)
+            tracker.update(updates)
 
     csv_bytes = qual_filtered.to_csv(index=False).encode()
     st.download_button(
@@ -595,6 +715,28 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         file_name=f"{city_key}_qualified_filtered.csv",
         mime="text/csv",
     )
+
+# ── Tracker summary ───────────────────────────────────────────────────────────
+if tracker:
+    with st.expander("📊 Parcel tracker summary", expanded=False):
+        st.caption("Counts across all parcels ever tracked (not filtered by current display).")
+        counts = {s: 0 for s in STATUS_OPTIONS}
+        for v in tracker.values():
+            s = v.get("status", "Not contacted")
+            if s in counts:
+                counts[s] += 1
+        summary_cols = st.columns(len(STATUS_OPTIONS))
+        for col_ui, status_name in zip(summary_cols, STATUS_OPTIONS):
+            sc = STATUS_COLORS[status_name]
+            col_ui.markdown(
+                f"<div style='background:{sc}18;border-left:4px solid {sc};"
+                f"border-radius:6px;padding:10px 12px;'>"
+                f"<div style='font-size:11px;color:{sc};font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.04em;'>{status_name}</div>"
+                f"<div style='font-size:26px;font-weight:800;color:#1e293b;'>{counts[status_name]}</div>"
+                f"<div style='font-size:11px;color:#64748b;'>parcels</div></div>",
+                unsafe_allow_html=True,
+            )
 
 # ── Per-parcel score breakdown ────────────────────────────────────────────────
 comp_keys = [c["key"] for c in SCORE_COMPONENTS]

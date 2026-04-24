@@ -570,555 +570,415 @@ if gdf_qual is not None and not gdf_qual.empty and "parcel_id" in gdf_qual.colum
 else:
     gdf_shown = gdf_qual  # fall back to all if no parcel_id
 
-# ── Page tabs ────────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["🗺️  Screened Parcels", "📋  Manual Listings"])
+# ── Top metrics ───────────────────────────────────────────────────────────────
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Total parcels scanned", f"{len(df_all):,}")
+m2.metric("Passed hard filters", f"{len(qual_all):,}")
+m3.metric("Shown on map", f"{len(qual_filtered):,}")
+m4.metric("Units — conservative", f"{int(qual_filtered['units_conservative'].sum()):,}")
+m5.metric("Units — optimistic",   f"{int(qual_filtered['units_optimistic'].sum()):,}")
 
-with tab1:
-    # ── Top metrics ───────────────────────────────────────────────────────────────
-    m1, m2, m3, m4, m5 = st.columns(5)
-    m1.metric("Total parcels scanned", f"{len(df_all):,}")
-    m2.metric("Passed hard filters", f"{len(qual_all):,}")
-    m3.metric("Shown on map", f"{len(qual_filtered):,}")
-    m4.metric("Units — conservative", f"{int(qual_filtered['units_conservative'].sum()):,}")
-    m5.metric("Units — optimistic",   f"{int(qual_filtered['units_optimistic'].sum()):,}")
+# ── Legend ────────────────────────────────────────────────────────────────────
+leg1, leg2, leg3, _rest = st.columns([1, 1, 1, 5])
+leg1.markdown(f"<span style='color:{COLOR_HIGH}'>⬛</span> Score ≥ {SCORE_HIGH}",
+              unsafe_allow_html=True)
+leg2.markdown(f"<span style='color:{COLOR_MED}'>⬛</span> Score {SCORE_MED}–{SCORE_HIGH-1}",
+              unsafe_allow_html=True)
+leg3.markdown(f"<span style='color:{COLOR_LOW}'>⬛</span> Score < {SCORE_MED}",
+              unsafe_allow_html=True)
 
-    # ── Legend ────────────────────────────────────────────────────────────────────
-    leg1, leg2, leg3, _rest = st.columns([1, 1, 1, 5])
-    leg1.markdown(f"<span style='color:{COLOR_HIGH}'>⬛</span> Score ≥ {SCORE_HIGH}",
-                  unsafe_allow_html=True)
-    leg2.markdown(f"<span style='color:{COLOR_MED}'>⬛</span> Score {SCORE_MED}–{SCORE_HIGH-1}",
-                  unsafe_allow_html=True)
-    leg3.markdown(f"<span style='color:{COLOR_LOW}'>⬛</span> Score < {SCORE_MED}",
-                  unsafe_allow_html=True)
+# ── Merge MF-recomputed values into gdf_shown so popup reflects active mode ───
+if USE_MF and gdf_shown is not None and not gdf_shown.empty \
+        and "parcel_id" in qual_filtered.columns and "parcel_id" in gdf_shown.columns:
+    mf_merge_cols = ["parcel_id", "score", "max_units_per_acre",
+                     "units_conservative", "units_optimistic", "pts_density"]
+    mf_merge_cols = [c for c in mf_merge_cols if c in qual_filtered.columns]
+    drop_cols = [c for c in mf_merge_cols if c != "parcel_id" and c in gdf_shown.columns]
+    gdf_shown = gdf_shown.drop(columns=drop_cols)
+    gdf_shown = gdf_shown.merge(qual_filtered[mf_merge_cols], on="parcel_id", how="left")
 
-    # ── Merge MF-recomputed values into gdf_shown so popup reflects active mode ───
-    if USE_MF and gdf_shown is not None and not gdf_shown.empty \
-            and "parcel_id" in qual_filtered.columns and "parcel_id" in gdf_shown.columns:
-        mf_merge_cols = ["parcel_id", "score", "max_units_per_acre",
-                         "units_conservative", "units_optimistic", "pts_density"]
-        mf_merge_cols = [c for c in mf_merge_cols if c in qual_filtered.columns]
-        drop_cols = [c for c in mf_merge_cols if c != "parcel_id" and c in gdf_shown.columns]
-        gdf_shown = gdf_shown.drop(columns=drop_cols)
-        gdf_shown = gdf_shown.merge(qual_filtered[mf_merge_cols], on="parcel_id", how="left")
+# ── Map ───────────────────────────────────────────────────────────────────────
+_mode_label_map = "Multifamily" if USE_MF else "Single-Family"
+m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map)
+st_folium(m, use_container_width=True, height=530, returned_objects=[])
 
-    # ── Map ───────────────────────────────────────────────────────────────────────
-    _mode_label_map = "Multifamily" if USE_MF else "Single-Family"
-    m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map)
-    st_folium(m, use_container_width=True, height=530, returned_objects=[])
+# ── Qualifying parcels table ──────────────────────────────────────────────────
+with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):
+    display_cols = [
+        "parcel_id", "address", "owner",
+        "calc_acres", "net_dev_acres",
+        "zone_code", "zone_label",
+        "dev_pathway",
+        "max_units_per_acre", "units_conservative", "units_optimistic",
+        "flood_pct", "wetland_pct",
+        "shape_score",
+        "soil_1", "soil_2", "soil_3",
+        "building_count", "mf_permitted", "adu_permitted",
+        # FLU columns (only shown when data is loaded — filtered below)
+        "future_lu_label", "future_max_units", "rezoning_delta",
+        "score", "review_flag",
+    ]
+    display_cols = [c for c in display_cols if c in qual_filtered.columns]
+    fmt = qual_filtered[display_cols].copy()
 
-    # ── Qualifying parcels table ──────────────────────────────────────────────────
-    with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):
-        display_cols = [
-            "parcel_id", "address", "owner",
-            "calc_acres", "net_dev_acres",
-            "zone_code", "zone_label",
-            "dev_pathway",
-            "max_units_per_acre", "units_conservative", "units_optimistic",
-            "flood_pct", "wetland_pct",
-            "shape_score",
-            "soil_1", "soil_2", "soil_3",
-            "building_count", "mf_permitted", "adu_permitted",
-            # FLU columns (only shown when data is loaded — filtered below)
-            "future_lu_label", "future_max_units", "rezoning_delta",
-            "score", "review_flag",
-        ]
-        display_cols = [c for c in display_cols if c in qual_filtered.columns]
-        fmt = qual_filtered[display_cols].copy()
+    # Format shape_score as a % (0–100%) and rename for clarity
+    if "shape_score" in fmt.columns:
+        fmt["shape_score"] = (fmt["shape_score"] * 100).round(0).astype(int).astype(str) + "%"
+        fmt = fmt.rename(columns={"shape_score": "Shape %"})
 
-        # Format shape_score as a % (0–100%) and rename for clarity
-        if "shape_score" in fmt.columns:
-            fmt["shape_score"] = (fmt["shape_score"] * 100).round(0).astype(int).astype(str) + "%"
-            fmt = fmt.rename(columns={"shape_score": "Shape %"})
+    # Rename soil columns for readability
+    soil_rename = {"soil_1": "Dominant Soil", "soil_2": "Soil 2", "soil_3": "Soil 3"}
+    fmt = fmt.rename(columns={k: v for k, v in soil_rename.items() if k in fmt.columns})
+    # Drop Soil 2 / Soil 3 columns if entirely empty (keeps table clean when parcels have one soil)
+    for col in ["Soil 2", "Soil 3"]:
+        if col in fmt.columns and fmt[col].fillna("").eq("").all():
+            fmt = fmt.drop(columns=[col])
 
-        # Rename soil columns for readability
-        soil_rename = {"soil_1": "Dominant Soil", "soil_2": "Soil 2", "soil_3": "Soil 3"}
-        fmt = fmt.rename(columns={k: v for k, v in soil_rename.items() if k in fmt.columns})
-        # Drop Soil 2 / Soil 3 columns if entirely empty (keeps table clean when parcels have one soil)
-        for col in ["Soil 2", "Soil 3"]:
-            if col in fmt.columns and fmt[col].fillna("").eq("").all():
-                fmt = fmt.drop(columns=[col])
+    # Rename review_flag column for readability
+    if "review_flag" in fmt.columns:
+        fmt = fmt.rename(columns={"review_flag": "Needs Review"})
 
-        # Rename review_flag column for readability
-        if "review_flag" in fmt.columns:
-            fmt = fmt.rename(columns={"review_flag": "Needs Review"})
+    for col in ("calc_acres", "net_dev_acres"):
+        if col in fmt.columns:
+            fmt[col] = fmt[col].round(2)
+    for col in ("flood_pct", "wetland_pct"):
+        if col in fmt.columns:
+            fmt[col] = (fmt[col] * 100).round(1).astype(str) + "%"
 
-        for col in ("calc_acres", "net_dev_acres"):
-            if col in fmt.columns:
-                fmt[col] = fmt[col].round(2)
-        for col in ("flood_pct", "wetland_pct"):
-            if col in fmt.columns:
-                fmt[col] = (fmt[col] * 100).round(1).astype(str) + "%"
-
-        # Add tracker columns
-        _pid_col = "parcel_id" if "parcel_id" in fmt.columns else None
-        if _pid_col:
-            fmt["Status"] = fmt[_pid_col].astype(str).map(
-                lambda pid: tracker.get(pid, {}).get("status", "Not contacted")
-            )
-            fmt["Notes"] = fmt[_pid_col].astype(str).map(
-                lambda pid: tracker.get(pid, {}).get("notes", "")
-            )
-            fmt["Reviewed ✓"] = fmt[_pid_col].astype(str).map(
-                lambda pid: bool(tracker.get(pid, {}).get("reviewed", False))
-            )
-
-        fmt_sorted = fmt.sort_values("score", ascending=False).reset_index(drop=True)
-
-        # Determine which columns are editable
-        _editable = {"Status", "Notes", "Reviewed ✓"} if _pid_col else set()
-        _disabled = [c for c in fmt_sorted.columns if c not in _editable]
-
-        edited = st.data_editor(
-            fmt_sorted,
-            column_config={
-                "Status": st.column_config.SelectboxColumn(
-                    "Status",
-                    options=STATUS_OPTIONS,
-                    required=True,
-                ),
-                "Notes": st.column_config.TextColumn("Notes", width="large"),
-                "Reviewed ✓": st.column_config.CheckboxColumn(
-                    "Reviewed ✓",
-                    help="Check once you've manually reviewed this parcel.",
-                    default=False,
-                ),
-            },
-            disabled=_disabled,
-            hide_index=True,
-            use_container_width=True,
-            key=f"tracker_editor_{city_key}",
+    # Add tracker columns
+    _pid_col = "parcel_id" if "parcel_id" in fmt.columns else None
+    if _pid_col:
+        fmt["Status"] = fmt[_pid_col].astype(str).map(
+            lambda pid: tracker.get(pid, {}).get("status", "Not contacted")
+        )
+        fmt["Notes"] = fmt[_pid_col].astype(str).map(
+            lambda pid: tracker.get(pid, {}).get("notes", "")
+        )
+        fmt["Reviewed ✓"] = fmt[_pid_col].astype(str).map(
+            lambda pid: bool(tracker.get(pid, {}).get("reviewed", False))
         )
 
-        # Detect changes and persist
-        if _pid_col and edited is not None:
-            updates = {}
-            for _, erow in edited.iterrows():
-                pid      = str(erow[_pid_col])
-                status   = erow.get("Status", "Not contacted")
-                notes    = erow.get("Notes", "") or ""
-                reviewed = bool(erow.get("Reviewed ✓", False))
-                old      = tracker.get(pid, {})
-                if (old.get("status", "Not contacted") != status
-                        or old.get("notes", "") != notes
-                        or bool(old.get("reviewed", False)) != reviewed):
-                    updates[pid] = {
-                        "status":     status,
-                        "notes":      notes,
-                        "reviewed":   reviewed,
-                        "updated":    datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                        "updated_by": _username,
-                    }
-            if updates:
-                save_tracker(updates)
-                tracker.update(updates)
+    fmt_sorted = fmt.sort_values("score", ascending=False).reset_index(drop=True)
 
-        csv_bytes = qual_filtered.to_csv(index=False).encode()
-        st.download_button(
-            "⬇ Download filtered CSV",
-            data=csv_bytes,
-            file_name=f"{city_key}_qualified_filtered.csv",
-            mime="text/csv",
+    # Determine which columns are editable
+    _editable = {"Status", "Notes", "Reviewed ✓"} if _pid_col else set()
+    _disabled = [c for c in fmt_sorted.columns if c not in _editable]
+
+    edited = st.data_editor(
+        fmt_sorted,
+        column_config={
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=STATUS_OPTIONS,
+                required=True,
+            ),
+            "Notes": st.column_config.TextColumn("Notes", width="large"),
+            "Reviewed ✓": st.column_config.CheckboxColumn(
+                "Reviewed ✓",
+                help="Check once you've manually reviewed this parcel.",
+                default=False,
+            ),
+        },
+        disabled=_disabled,
+        hide_index=True,
+        use_container_width=True,
+        key=f"tracker_editor_{city_key}",
+    )
+
+    # Detect changes and persist
+    if _pid_col and edited is not None:
+        updates = {}
+        for _, erow in edited.iterrows():
+            pid      = str(erow[_pid_col])
+            status   = erow.get("Status", "Not contacted")
+            notes    = erow.get("Notes", "") or ""
+            reviewed = bool(erow.get("Reviewed ✓", False))
+            old      = tracker.get(pid, {})
+            if (old.get("status", "Not contacted") != status
+                    or old.get("notes", "") != notes
+                    or bool(old.get("reviewed", False)) != reviewed):
+                updates[pid] = {
+                    "status":     status,
+                    "notes":      notes,
+                    "reviewed":   reviewed,
+                    "updated":    datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                    "updated_by": _username,
+                }
+        if updates:
+            save_tracker(updates)
+            tracker.update(updates)
+
+    csv_bytes = qual_filtered.to_csv(index=False).encode()
+    st.download_button(
+        "⬇ Download filtered CSV",
+        data=csv_bytes,
+        file_name=f"{city_key}_qualified_filtered.csv",
+        mime="text/csv",
+    )
+
+# ── Tracker summary ───────────────────────────────────────────────────────────
+if tracker:
+    with st.expander("📊 Parcel tracker summary", expanded=False):
+        st.caption("Counts across all parcels ever tracked (not filtered by current display).")
+        counts = {s: 0 for s in STATUS_OPTIONS}
+        for v in tracker.values():
+            s = v.get("status", "Not contacted")
+            if s in counts:
+                counts[s] += 1
+        summary_cols = st.columns(len(STATUS_OPTIONS))
+        for col_ui, status_name in zip(summary_cols, STATUS_OPTIONS):
+            sc = STATUS_COLORS[status_name]
+            col_ui.markdown(
+                f"<div style='background:{sc}18;border-left:4px solid {sc};"
+                f"border-radius:6px;padding:10px 12px;'>"
+                f"<div style='font-size:11px;color:{sc};font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.04em;'>{status_name}</div>"
+                f"<div style='font-size:26px;font-weight:800;color:#1e293b;'>{counts[status_name]}</div>"
+                f"<div style='font-size:11px;color:#64748b;'>parcels</div></div>",
+                unsafe_allow_html=True,
+            )
+
+# ── Per-parcel score breakdown ────────────────────────────────────────────────
+comp_keys = [c["key"] for c in SCORE_COMPONENTS]
+if not qual_filtered.empty and all(k in qual_filtered.columns for k in comp_keys):
+    with st.expander("🔢 Score breakdown — per parcel", expanded=True):
+        st.caption(
+            "Shows how each component contributed to a parcel's total score. "
+            "Bar = % of that component's maximum earned."
         )
 
-    # ── Tracker summary ───────────────────────────────────────────────────────────
-    if tracker:
-        with st.expander("📊 Parcel tracker summary", expanded=False):
-            st.caption("Counts across all parcels ever tracked (not filtered by current display).")
-            counts = {s: 0 for s in STATUS_OPTIONS}
-            for v in tracker.values():
-                s = v.get("status", "Not contacted")
-                if s in counts:
-                    counts[s] += 1
-            summary_cols = st.columns(len(STATUS_OPTIONS))
-            for col_ui, status_name in zip(summary_cols, STATUS_OPTIONS):
-                sc = STATUS_COLORS[status_name]
+        for _, row in qual_filtered.sort_values("score", ascending=False).iterrows():
+            addr       = row.get("address") or row.get("parcel_id") or "Parcel"
+            score      = float(row.get("score", 0) or 0)
+            color      = score_color(score)
+            rezone_up  = bool(row.get("rezoning_upside", False))
+            rezone_d   = int(row.get("rezoning_delta", 0) or 0)
+            flu_label  = str(row.get("future_lu_label", "") or "")
+
+            # Rezoning upside badge
+            rezone_badge = ""
+            if rezone_up and flu_label:
+                rezone_badge = (
+                    f" &nbsp;<span style='background:{COLOR_HIGH};color:#fff;"
+                    f"font-size:11px;font-weight:700;padding:2px 7px;"
+                    f"border-radius:10px;'>🔮 REZONING +{rezone_d} u/ac → {flu_label}</span>"
+                )
+            elif flu_label:
+                rezone_badge = (
+                    f" &nbsp;<span style='background:#e5e7eb;color:#555;"
+                    f"font-size:11px;padding:2px 7px;border-radius:10px;'>"
+                    f"FLU: {flu_label}</span>"
+                )
+
+            st.markdown(
+                f"**{addr}** &nbsp; "
+                f"<span style='color:{color};font-size:1.1em;font-weight:700;'>"
+                f"Total: {score:.1f} / 100</span>"
+                f"{rezone_badge}",
+                unsafe_allow_html=True,
+            )
+
+            cols = st.columns(len(SCORE_COMPONENTS))
+            for col_ui, comp in zip(cols, SCORE_COMPONENTS):
+                pts     = float(row.get(comp["key"], 0) or 0)
+                max_pts = comp["max"]
+                pct     = pts / max_pts if max_pts else 0
+                bar_col = COLOR_HIGH if pct >= 0.8 else (COLOR_MED if pct >= 0.4 else COLOR_LOW)
                 col_ui.markdown(
-                    f"<div style='background:{sc}18;border-left:4px solid {sc};"
-                    f"border-radius:6px;padding:10px 12px;'>"
-                    f"<div style='font-size:11px;color:{sc};font-weight:700;"
-                    f"text-transform:uppercase;letter-spacing:.04em;'>{status_name}</div>"
-                    f"<div style='font-size:26px;font-weight:800;color:#1e293b;'>{counts[status_name]}</div>"
-                    f"<div style='font-size:11px;color:#64748b;'>parcels</div></div>",
+                    f"<div style='font-size:11px;color:#888;margin-bottom:2px;'>"
+                    f"{comp['label']}</div>"
+                    f"<div style='background:#e5e7eb;border-radius:4px;height:10px;'>"
+                    f"<div style='background:{bar_col};border-radius:4px;height:10px;"
+                    f"width:{int(pct*100)}%;'></div></div>"
+                    f"<div style='font-size:12px;margin-top:2px;'>"
+                    f"<b>{pts:.0f}</b> / {max_pts}</div>",
                     unsafe_allow_html=True,
                 )
+            st.divider()
 
-    # ── Per-parcel score breakdown ────────────────────────────────────────────────
-    comp_keys = [c["key"] for c in SCORE_COMPONENTS]
-    if not qual_filtered.empty and all(k in qual_filtered.columns for k in comp_keys):
-        with st.expander("🔢 Score breakdown — per parcel", expanded=True):
-            st.caption(
-                "Shows how each component contributed to a parcel's total score. "
-                "Bar = % of that component's maximum earned."
-            )
+# ── Rezoning watch list ───────────────────────────────────────────────────────
+# Show qualifying parcels that have a positive rezoning delta (FLU > current zoning)
+flu_available = "future_lu_code" in qual_filtered.columns and \
+                qual_filtered["future_lu_code"].astype(str).str.strip().any()
 
-            for _, row in qual_filtered.sort_values("score", ascending=False).iterrows():
-                addr       = row.get("address") or row.get("parcel_id") or "Parcel"
-                score      = float(row.get("score", 0) or 0)
-                color      = score_color(score)
-                rezone_up  = bool(row.get("rezoning_upside", False))
-                rezone_d   = int(row.get("rezoning_delta", 0) or 0)
-                flu_label  = str(row.get("future_lu_label", "") or "")
-
-                # Rezoning upside badge
-                rezone_badge = ""
-                if rezone_up and flu_label:
-                    rezone_badge = (
-                        f" &nbsp;<span style='background:{COLOR_HIGH};color:#fff;"
-                        f"font-size:11px;font-weight:700;padding:2px 7px;"
-                        f"border-radius:10px;'>🔮 REZONING +{rezone_d} u/ac → {flu_label}</span>"
-                    )
-                elif flu_label:
-                    rezone_badge = (
-                        f" &nbsp;<span style='background:#e5e7eb;color:#555;"
-                        f"font-size:11px;padding:2px 7px;border-radius:10px;'>"
-                        f"FLU: {flu_label}</span>"
-                    )
-
-                st.markdown(
-                    f"**{addr}** &nbsp; "
-                    f"<span style='color:{color};font-size:1.1em;font-weight:700;'>"
-                    f"Total: {score:.1f} / 100</span>"
-                    f"{rezone_badge}",
-                    unsafe_allow_html=True,
-                )
-
-                cols = st.columns(len(SCORE_COMPONENTS))
-                for col_ui, comp in zip(cols, SCORE_COMPONENTS):
-                    pts     = float(row.get(comp["key"], 0) or 0)
-                    max_pts = comp["max"]
-                    pct     = pts / max_pts if max_pts else 0
-                    bar_col = COLOR_HIGH if pct >= 0.8 else (COLOR_MED if pct >= 0.4 else COLOR_LOW)
-                    col_ui.markdown(
-                        f"<div style='font-size:11px;color:#888;margin-bottom:2px;'>"
-                        f"{comp['label']}</div>"
-                        f"<div style='background:#e5e7eb;border-radius:4px;height:10px;'>"
-                        f"<div style='background:{bar_col};border-radius:4px;height:10px;"
-                        f"width:{int(pct*100)}%;'></div></div>"
-                        f"<div style='font-size:12px;margin-top:2px;'>"
-                        f"<b>{pts:.0f}</b> / {max_pts}</div>",
-                        unsafe_allow_html=True,
-                    )
-                st.divider()
-
-    # ── Rezoning watch list ───────────────────────────────────────────────────────
-    # Show qualifying parcels that have a positive rezoning delta (FLU > current zoning)
-    flu_available = "future_lu_code" in qual_filtered.columns and \
-                    qual_filtered["future_lu_code"].astype(str).str.strip().any()
-
-    if flu_available:
-        rezone_parcels = qual_filtered[qual_filtered["rezoning_upside"] == True].copy()
-        if not rezone_parcels.empty:
-            with st.expander(
-                f"🔮 Rezoning watch list  ({len(rezone_parcels)} parcels with upside)",
-                expanded=True,
-            ):
-                st.caption(
-                    "These qualifying parcels are **master-planned for higher density** than "
-                    "their current zoning allows. They are strong rezoning candidates — "
-                    "the current zoning may be a temporary constraint rather than a ceiling."
-                )
-                rezone_display_cols = [c for c in [
-                    "address", "owner", "calc_acres",
-                    "zone_code", "zone_label", "max_units_per_acre",
-                    "future_lu_label", "future_max_units", "rezoning_delta",
-                    "units_conservative", "units_optimistic", "score",
-                ] if c in rezone_parcels.columns]
-                rz_fmt = rezone_parcels[rezone_display_cols].copy()
-                if "calc_acres" in rz_fmt.columns:
-                    rz_fmt["calc_acres"] = rz_fmt["calc_acres"].round(2)
-                st.dataframe(
-                    rz_fmt.sort_values("rezoning_delta", ascending=False),
-                    width="stretch",
-                    hide_index=True,
-                )
-
-    # ── Development pathway breakdown ────────────────────────────────────────────
-    if "dev_pathway" in qual_filtered.columns:
+if flu_available:
+    rezone_parcels = qual_filtered[qual_filtered["rezoning_upside"] == True].copy()
+    if not rezone_parcels.empty:
         with st.expander(
-            "🛣️ Development pathway breakdown  (how each parcel reaches 3+ u/ac)",
+            f"🔮 Rezoning watch list  ({len(rezone_parcels)} parcels with upside)",
             expanded=True,
         ):
             st.caption(
-                "Every qualifying parcel is classified by the **simplest available route** to "
-                "≥ 3 units/acre. Approval burden increases left → right. "
-                "Use the sidebar filter to isolate a specific pathway."
+                "These qualifying parcels are **master-planned for higher density** than "
+                "their current zoning allows. They are strong rezoning candidates — "
+                "the current zoning may be a temporary constraint rather than a ceiling."
             )
-            # Summary counts
-            pathway_order = [
-                "By right", "PRD special use", "PUD special use",
-                "Master plan upzone", "PD rezoning", "Not viable",
-            ]
-            counts = qual_filtered["dev_pathway"].value_counts().reindex(
-                pathway_order, fill_value=0
-            ).reset_index()
-            counts.columns = ["Pathway", "Parcels"]
+            rezone_display_cols = [c for c in [
+                "address", "owner", "calc_acres",
+                "zone_code", "zone_label", "max_units_per_acre",
+                "future_lu_label", "future_max_units", "rezoning_delta",
+                "units_conservative", "units_optimistic", "score",
+            ] if c in rezone_parcels.columns]
+            rz_fmt = rezone_parcels[rezone_display_cols].copy()
+            if "calc_acres" in rz_fmt.columns:
+                rz_fmt["calc_acres"] = rz_fmt["calc_acres"].round(2)
+            st.dataframe(
+                rz_fmt.sort_values("rezoning_delta", ascending=False),
+                width="stretch",
+                hide_index=True,
+            )
 
-            # Color-coded metric tiles
-            metric_cols = st.columns(len(pathway_order))
-            for col_ui, (_, row_p) in zip(metric_cols, counts.iterrows()):
-                pname  = row_p["Pathway"]
-                pcount = int(row_p["Parcels"])
-                pcolor = PATHWAY_COLORS.get(pname, "#9ca3af")
-                col_ui.markdown(
-                    f"<div style='background:{pcolor}18;border-left:4px solid {pcolor};"
-                    f"border-radius:6px;padding:10px 12px;'>"
-                    f"<div style='font-size:11px;color:{pcolor};font-weight:700;"
-                    f"text-transform:uppercase;letter-spacing:.04em;'>{pname}</div>"
-                    f"<div style='font-size:26px;font-weight:800;color:#1e293b;'>{pcount}</div>"
-                    f"<div style='font-size:11px;color:#64748b;'>parcels</div></div>",
+# ── Development pathway breakdown ────────────────────────────────────────────
+if "dev_pathway" in qual_filtered.columns:
+    with st.expander(
+        "🛣️ Development pathway breakdown  (how each parcel reaches 3+ u/ac)",
+        expanded=True,
+    ):
+        st.caption(
+            "Every qualifying parcel is classified by the **simplest available route** to "
+            "≥ 3 units/acre. Approval burden increases left → right. "
+            "Use the sidebar filter to isolate a specific pathway."
+        )
+        # Summary counts
+        pathway_order = [
+            "By right", "PRD special use", "PUD special use",
+            "Master plan upzone", "PD rezoning", "Not viable",
+        ]
+        counts = qual_filtered["dev_pathway"].value_counts().reindex(
+            pathway_order, fill_value=0
+        ).reset_index()
+        counts.columns = ["Pathway", "Parcels"]
+
+        # Color-coded metric tiles
+        metric_cols = st.columns(len(pathway_order))
+        for col_ui, (_, row_p) in zip(metric_cols, counts.iterrows()):
+            pname  = row_p["Pathway"]
+            pcount = int(row_p["Parcels"])
+            pcolor = PATHWAY_COLORS.get(pname, "#9ca3af")
+            col_ui.markdown(
+                f"<div style='background:{pcolor}18;border-left:4px solid {pcolor};"
+                f"border-radius:6px;padding:10px 12px;'>"
+                f"<div style='font-size:11px;color:{pcolor};font-weight:700;"
+                f"text-transform:uppercase;letter-spacing:.04em;'>{pname}</div>"
+                f"<div style='font-size:26px;font-weight:800;color:#1e293b;'>{pcount}</div>"
+                f"<div style='font-size:11px;color:#64748b;'>parcels</div></div>",
+                unsafe_allow_html=True,
+            )
+
+        # Detailed pathway table (excluding 'Not viable' — they won't show in map anyway)
+        viable = qual_filtered[qual_filtered["dev_pathway"] != "Not viable"].copy()
+        if not viable.empty:
+            st.markdown("---")
+            pathway_detail_cols = [c for c in [
+                "address", "owner", "calc_acres",
+                "zone_code", "zone_label", "dev_pathway",
+                "max_units_per_acre", "future_lu_label", "future_max_units",
+                "units_conservative", "units_optimistic", "score",
+            ] if c in viable.columns]
+            pwy_fmt = viable[pathway_detail_cols].copy()
+            if "calc_acres" in pwy_fmt.columns:
+                pwy_fmt["calc_acres"] = pwy_fmt["calc_acres"].round(2)
+            st.dataframe(
+                pwy_fmt.sort_values(["dev_pathway", "score"], ascending=[True, False]),
+                width="stretch",
+                hide_index=True,
+            )
+
+# ── Ordinance review list ─────────────────────────────────────────────────────
+review_available = "review_flag" in qual_filtered.columns and \
+                   qual_filtered["review_flag"].any()
+
+if review_available:
+    review_parcels = qual_filtered[qual_filtered["review_flag"] == True].copy()
+    if not review_parcels.empty:
+        with st.expander(
+            f"⚠️ Needs manual review  ({len(review_parcels)} parcels)",
+            expanded=False,
+        ):
+            st.caption(
+                "These qualifying parcels have ordinance conditions that cannot be resolved "
+                "automatically — density is unconfirmed, multifamily requires special use "
+                "approval, a per-structure unit cap applies, or another provision needs "
+                "manual verification. Review reasons and ordinance links are shown below."
+            )
+            review_display_cols = [c for c in [
+                "address", "owner", "calc_acres",
+                "zone_code", "zone_label", "max_units_per_acre",
+                "units_conservative", "units_optimistic",
+                "review_reasons", "ordinance_url", "score",
+            ] if c in review_parcels.columns]
+            rv_fmt = review_parcels[review_display_cols].copy()
+            if "calc_acres" in rv_fmt.columns:
+                rv_fmt["calc_acres"] = rv_fmt["calc_acres"].round(2)
+            # Make ordinance_url a clickable link
+            if "ordinance_url" in rv_fmt.columns:
+                rv_fmt["ordinance_url"] = rv_fmt["ordinance_url"].apply(
+                    lambda u: f'<a href="{u}" target="_blank">Ordinance ↗</a>'
+                    if u else ""
+                )
+                st.write(
+                    rv_fmt.sort_values("score", ascending=False).to_html(
+                        escape=False, index=False
+                    ),
                     unsafe_allow_html=True,
                 )
-
-            # Detailed pathway table (excluding 'Not viable' — they won't show in map anyway)
-            viable = qual_filtered[qual_filtered["dev_pathway"] != "Not viable"].copy()
-            if not viable.empty:
-                st.markdown("---")
-                pathway_detail_cols = [c for c in [
-                    "address", "owner", "calc_acres",
-                    "zone_code", "zone_label", "dev_pathway",
-                    "max_units_per_acre", "future_lu_label", "future_max_units",
-                    "units_conservative", "units_optimistic", "score",
-                ] if c in viable.columns]
-                pwy_fmt = viable[pathway_detail_cols].copy()
-                if "calc_acres" in pwy_fmt.columns:
-                    pwy_fmt["calc_acres"] = pwy_fmt["calc_acres"].round(2)
+            else:
                 st.dataframe(
-                    pwy_fmt.sort_values(["dev_pathway", "score"], ascending=[True, False]),
+                    rv_fmt.sort_values("score", ascending=False),
                     width="stretch",
                     hide_index=True,
                 )
 
-    # ── Ordinance review list ─────────────────────────────────────────────────────
-    review_available = "review_flag" in qual_filtered.columns and \
-                       qual_filtered["review_flag"].any()
-
-    if review_available:
-        review_parcels = qual_filtered[qual_filtered["review_flag"] == True].copy()
-        if not review_parcels.empty:
-            with st.expander(
-                f"⚠️ Needs manual review  ({len(review_parcels)} parcels)",
-                expanded=False,
-            ):
-                st.caption(
-                    "These qualifying parcels have ordinance conditions that cannot be resolved "
-                    "automatically — density is unconfirmed, multifamily requires special use "
-                    "approval, a per-structure unit cap applies, or another provision needs "
-                    "manual verification. Review reasons and ordinance links are shown below."
-                )
-                review_display_cols = [c for c in [
-                    "address", "owner", "calc_acres",
-                    "zone_code", "zone_label", "max_units_per_acre",
-                    "units_conservative", "units_optimistic",
-                    "review_reasons", "ordinance_url", "score",
-                ] if c in review_parcels.columns]
-                rv_fmt = review_parcels[review_display_cols].copy()
-                if "calc_acres" in rv_fmt.columns:
-                    rv_fmt["calc_acres"] = rv_fmt["calc_acres"].round(2)
-                # Make ordinance_url a clickable link
-                if "ordinance_url" in rv_fmt.columns:
-                    rv_fmt["ordinance_url"] = rv_fmt["ordinance_url"].apply(
-                        lambda u: f'<a href="{u}" target="_blank">Ordinance ↗</a>'
-                        if u else ""
-                    )
-                    st.write(
-                        rv_fmt.sort_values("score", ascending=False).to_html(
-                            escape=False, index=False
-                        ),
-                        unsafe_allow_html=True,
-                    )
-                else:
-                    st.dataframe(
-                        rv_fmt.sort_values("score", ascending=False),
-                        width="stretch",
-                        hide_index=True,
-                    )
-
-    # ── Scoring methodology ───────────────────────────────────────────────────────
-    with st.expander("📐 How scores are calculated"):
-        _mode_label = "Multifamily" if USE_MF else "Single-Family"
-        st.markdown(
-            f"Each qualifying parcel is scored **0–100** across five components "
-            f"in **{_mode_label}** mode. "
-            "Hard filters (flood, buildings, zoning) must pass first — "
-            "parcels that fail any hard filter are excluded entirely and not scored."
-        )
-        # Density description varies by mode
-        _density_desc = (
-            "Multifamily units/acre allowed by zoning. Full credit at 30 u/ac "
-            "(e.g. MFR, NMU, OS zones). Based on MF zoning caps per ordinance."
-            if USE_MF else
-            "Single-family units/acre allowed by zoning. Full credit at 7 u/ac "
-            "(e.g. MDR, OT, S zones). Based on SF minimum lot area per ordinance."
-        )
-        methodology_rows = []
-        for comp in SCORE_COMPONENTS:
-            desc = _density_desc if comp["key"] == "pts_density" else comp["description"]
-            methodology_rows.append({
-                "Component":    comp["label"],
-                "Max points":   comp["max"],
-                "How it works": desc,
-            })
-        st.dataframe(
-            pd.DataFrame(methodology_rows),
-            width="stretch",
-            hide_index=True,
-        )
-        st.caption(
-            "**Phase 2 additions planned:** tax delinquency flag (+pts), MLS listing status, "
-            "water/sewer availability."
-        )
-
-    # ── Filter breakdown ─────────────────────────────────────────────────────────
-    with st.expander("📊 Why parcels were eliminated"):
-        reason_counts = df_all["filter_reason"].value_counts().reset_index()
-        reason_counts.columns = ["Reason", "Count"]
-        reason_counts["% of total"] = (
-            reason_counts["Count"] / len(df_all) * 100
-        ).round(1).astype(str) + "%"
-        st.dataframe(reason_counts, width="stretch", hide_index=True)
-
-    # ── Footer ────────────────────────────────────────────────────────────────────
-    st.divider()
+# ── Scoring methodology ───────────────────────────────────────────────────────
+with st.expander("📐 How scores are calculated"):
+    _mode_label = "Multifamily" if USE_MF else "Single-Family"
+    st.markdown(
+        f"Each qualifying parcel is scored **0–100** across five components "
+        f"in **{_mode_label}** mode. "
+        "Hard filters (flood, buildings, zoning) must pass first — "
+        "parcels that fail any hard filter are excluded entirely and not scored."
+    )
+    # Density description varies by mode
+    _density_desc = (
+        "Multifamily units/acre allowed by zoning. Full credit at 30 u/ac "
+        "(e.g. MFR, NMU, OS zones). Based on MF zoning caps per ordinance."
+        if USE_MF else
+        "Single-family units/acre allowed by zoning. Full credit at 7 u/ac "
+        "(e.g. MDR, OT, S zones). Based on SF minimum lot area per ordinance."
+    )
+    methodology_rows = []
+    for comp in SCORE_COMPONENTS:
+        desc = _density_desc if comp["key"] == "pts_density" else comp["description"]
+        methodology_rows.append({
+            "Component":    comp["label"],
+            "Max points":   comp["max"],
+            "How it works": desc,
+        })
+    st.dataframe(
+        pd.DataFrame(methodology_rows),
+        width="stretch",
+        hide_index=True,
+    )
     st.caption(
-        "Data sources: Ottawa County ArcGIS parcels/zoning · FEMA NFHL flood zones · "
-        "EGLE Part 303 State Wetland Inventory (gisagoegle.state.mi.us) · OSM building footprints · "
-        "Ottawa County MasterPlanZoning service (Future Land Use — gis.miottawa.org).  "
-        "Grand Haven density values verified against Chapter 40 (Municode, Jan 2026). "
-        "Parcels flagged ⚠️ have ordinance conditions requiring manual review — see the Needs Review section."
+        "**Phase 2 additions planned:** tax delinquency flag (+pts), MLS listing status, "
+        "water/sewer availability."
     )
 
+# ── Filter breakdown ─────────────────────────────────────────────────────────
+with st.expander("📊 Why parcels were eliminated"):
+    reason_counts = df_all["filter_reason"].value_counts().reset_index()
+    reason_counts.columns = ["Reason", "Count"]
+    reason_counts["% of total"] = (
+        reason_counts["Count"] / len(df_all) * 100
+    ).round(1).astype(str) + "%"
+    st.dataframe(reason_counts, width="stretch", hide_index=True)
 
-with tab2:
-    _ML_FILE = ROOT / "Manual Add Land Listings.xlsx"
-
-    @st.cache_data(ttl=300)
-    def load_manual_listings(path: str):
-        """Read CARWM and Facebook listings from Excel, preserving hyperlinks."""
-        import openpyxl as _oxl
-        wb = _oxl.load_workbook(path)
-        ws = wb.active
-
-        # Collect hyperlinks by row index (1-based Excel rows)
-        link_by_row = {}
-        for row in ws.iter_rows():
-            for cell in row:
-                if cell.hyperlink:
-                    link_by_row[cell.row] = cell.hyperlink.target
-
-        # Read data — headers are on Excel row 4 (0-indexed row 2 after 2-row skip)
-        df = pd.read_excel(path, header=2)
-        df.columns = [
-            "Address", "Parcel_ID", "List_Price", "City", "County", "Zoning",
-            "Allowable_Density", "Master_Plan", "Master_Plan_Density", "Lot_Acres",
-            "List_Price_per_Acre", "Road_Frontage", "Utilities_Available",
-            "EGLE_Wetland", "Min_Lot_Area", "Max_Lot_Coverage", "Min_Unit_Size",
-            "Min_Ground_Floor", "Notes",
-        ]
-        # Row 0 of df = Excel row 4 (header) → actual data starts at df row 1
-        # Excel data rows start at row 5 → df index 0 = Excel row 5
-        # df index i → Excel row = i + 5
-        df = df.iloc[1:].reset_index(drop=True)  # drop the repeated header row
-        df["_excel_row"] = df.index + 5
-        df["Listing_URL"] = df["_excel_row"].map(link_by_row).fillna("")
-
-        # Clean up
-        df["Parcel_ID"]  = df["Parcel_ID"].astype(str).str.strip().replace("nan", "")
-        df["Notes"]      = df["Notes"].astype(str).str.replace("\n", " ").replace("nan", "")
-        df["Utilities_Available"] = df["Utilities_Available"].astype(str).replace("nan", "")
-        df["List_Price"] = pd.to_numeric(df["List_Price"], errors="coerce")
-        df["Lot_Acres"]  = pd.to_numeric(df["Lot_Acres"],  errors="coerce")
-
-        carwm = df[~df["Address"].astype(str).str.startswith("Facebook")].copy()
-        facebook = df[df["Address"].astype(str).str.startswith("Facebook")].copy()
-        return carwm, facebook
-
-    if not _ML_FILE.exists():
-        st.warning(
-            "Manual listings file not found. Place **Manual Add Land Listings.xlsx** "
-            "in the project root folder.",
-            icon="📋",
-        )
-    else:
-        ml_carwm, ml_facebook = load_manual_listings(str(_ML_FILE))
-
-        st.caption(
-            f"Reading from **Manual Add Land Listings.xlsx** · "
-            f"{len(ml_carwm)} CARWM listings · {len(ml_facebook)} Facebook Marketplace listings"
-        )
-
-        # ── CARWM listings ────────────────────────────────────────────────────
-        st.subheader(f"🏢 CARWM Listings  ({len(ml_carwm)})")
-        st.caption(
-            "Listed parcels sourced from Commercial Alliance of REALTORS® West Michigan. "
-            "Parcel IDs are matched against our scored database where possible."
-        )
-
-        # Try to join to our parcel database on parcel_id
-        _has_db = df_all is not None and "parcel_id" in df_all.columns
-        carwm_display = ml_carwm[[
-            "Address", "Parcel_ID", "City", "County", "Lot_Acres",
-            "List_Price", "Zoning", "Utilities_Available", "Notes",
-        ]].copy()
-        carwm_display = carwm_display.rename(columns={
-            "Parcel_ID":           "Parcel ID",
-            "Lot_Acres":           "Acres",
-            "List_Price":          "List Price ($)",
-            "Utilities_Available": "Utilities",
-        })
-        carwm_display["List Price ($)"] = carwm_display["List Price ($)"].apply(
-            lambda x: f"${x:,.0f}" if pd.notna(x) else ""
-        )
-        carwm_display["Acres"] = carwm_display["Acres"].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else ""
-        )
-
-        if _has_db:
-            # Join score only — flood/wetland excluded (parcels are outside pipeline coverage area)
-            _db_join = df_all[["parcel_id", "score"]].copy()
-            _db_join = _db_join.rename(columns={"parcel_id": "Parcel ID"})
-            carwm_display = carwm_display.merge(_db_join, on="Parcel ID", how="left")
-            carwm_display["score"] = carwm_display["score"].apply(
-                lambda x: f"{x:.1f}" if pd.notna(x) else "—"
-            )
-            carwm_display = carwm_display.rename(columns={"score": "Score"})
-
-        st.dataframe(carwm_display, hide_index=True, use_container_width=True)
-
-        # ── Facebook Marketplace listings ──────────────────────────────────────
-        st.divider()
-        st.subheader(f"📱 Facebook Marketplace Listings  ({len(ml_facebook)})")
-        st.caption(
-            "Sourced from Facebook Marketplace. Locations are approximate — "
-            "parcel ID matching not available. Click the listing link to view the original post."
-        )
-
-        fb_display = ml_facebook[[
-            "Address", "City", "County", "Lot_Acres", "List_Price", "Notes", "Listing_URL",
-        ]].copy()
-        fb_display = fb_display.rename(columns={
-            "Lot_Acres":  "Acres",
-            "List_Price": "List Price ($)",
-        })
-        fb_display["List Price ($)"] = fb_display["List Price ($)"].apply(
-            lambda x: f"${x:,.0f}" if pd.notna(x) else ""
-        )
-        fb_display["Acres"] = fb_display["Acres"].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else ""
-        )
-        # Render listing URLs as clickable links
-        fb_display["Listing"] = fb_display["Listing_URL"].apply(
-            lambda u: f'<a href="{u}" target="_blank">View ↗</a>' if u else ""
-        )
-        fb_display = fb_display.drop(columns=["Listing_URL", "Address"])
-
-        # Build HTML with per-column header alignment
-        _center_cols = {"Acres", "Listing"}
-        _html = fb_display.to_html(escape=False, index=False)
-        # Replace each <th>ColName</th> with aligned version
-        for col in fb_display.columns:
-            align = "center" if col in _center_cols else "left"
-            _html = _html.replace(
-                f"<th>{col}</th>",
-                f"<th style='text-align:{align};'>{col}</th>",
-            )
-        st.write(_html, unsafe_allow_html=True)
+# ── Footer ────────────────────────────────────────────────────────────────────
+st.divider()
+st.caption(
+    "Data sources: Ottawa County ArcGIS parcels/zoning · FEMA NFHL flood zones · "
+    "EGLE Part 303 State Wetland Inventory (gisagoegle.state.mi.us) · OSM building footprints · "
+    "Ottawa County MasterPlanZoning service (Future Land Use — gis.miottawa.org).  "
+    "Grand Haven density values verified against Chapter 40 (Municode, Jan 2026). "
+    "Parcels flagged ⚠️ have ordinance conditions requiring manual review — see the Needs Review section."
+)

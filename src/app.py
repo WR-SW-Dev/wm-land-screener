@@ -204,6 +204,9 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
 
     gdf = gdf.to_crs("EPSG:4326")
 
+    # Group all parcel polygons into one toggleable layer
+    parcel_group = folium.FeatureGroup(name="📍 Parcels", show=True)
+
     for _, row in gdf.iterrows():
         if row.geometry is None or row.geometry.is_empty:
             continue
@@ -341,8 +344,9 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             },
             popup=folium.Popup(popup_html, max_width=290),
             tooltip=f"{addr}  |  Score {score:.0f}  |  {u_con}–{u_opt} units",
-        ).add_to(m)
+        ).add_to(parcel_group)
 
+    parcel_group.add_to(m)
     folium.LayerControl(position="topright", collapsed=False).add_to(m)
     m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
     return m

@@ -186,12 +186,14 @@ def score_components(row: pd.Series) -> dict:
     shape_score = float(row.get("shape_score", 0) or 0)
     pts_shape = round(min(shape_score, 1.0) * 10, 1)
 
+    # Explicit caps — ensures no component ever exceeds its defined max
+    # regardless of formula edge cases or stale cached data.
     return {
-        "pts_density":   pts_density,
-        "pts_rezoning":  pts_rezoning,
-        "pts_wetland":   pts_wetland,
-        "pts_flood":     pts_flood,
-        "pts_shape":     pts_shape,
+        "pts_density":  min(pts_density,  40.0),
+        "pts_rezoning": min(pts_rezoning, 20.0),
+        "pts_wetland":  min(pts_wetland,  15.0),
+        "pts_flood":    min(pts_flood,    15.0),
+        "pts_shape":    min(pts_shape,    10.0),
     }
 
 

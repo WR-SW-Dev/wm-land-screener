@@ -677,11 +677,11 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         "max_units_per_acre", "units_conservative", "units_optimistic",
         "flood_pct", "wetland_pct",
         "shape_score",
-        "soil_1", "soil_2", "soil_3",
+        "soil_1",
         "mf_permitted", "adu_permitted",
         # FLU columns (only shown when data is loaded — filtered below)
         "future_lu_label", "future_max_units", "rezoning_delta",
-        "score", "review_flag",
+        "score",
     ]
     display_cols = [c for c in display_cols if c in qual_filtered.columns]
     fmt = qual_filtered[display_cols].copy()
@@ -691,17 +691,9 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         fmt["shape_score"] = (fmt["shape_score"] * 100).round(0).astype(int).astype(str) + "%"
         fmt = fmt.rename(columns={"shape_score": "Shape %"})
 
-    # Rename soil columns for readability
-    soil_rename = {"soil_1": "Dominant Soil", "soil_2": "Soil 2", "soil_3": "Soil 3"}
-    fmt = fmt.rename(columns={k: v for k, v in soil_rename.items() if k in fmt.columns})
-    # Drop Soil 2 / Soil 3 columns if entirely empty (keeps table clean when parcels have one soil)
-    for col in ["Soil 2", "Soil 3"]:
-        if col in fmt.columns and fmt[col].fillna("").eq("").all():
-            fmt = fmt.drop(columns=[col])
-
-    # Rename review_flag column for readability
-    if "review_flag" in fmt.columns:
-        fmt = fmt.rename(columns={"review_flag": "Needs Review"})
+    # Rename soil_1 column for readability
+    if "soil_1" in fmt.columns:
+        fmt = fmt.rename(columns={"soil_1": "Dominant Soil"})
 
     for col in ("calc_acres", "net_dev_acres"):
         if col in fmt.columns:

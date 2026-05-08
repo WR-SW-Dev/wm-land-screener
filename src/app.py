@@ -173,9 +173,32 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
     min_lon, min_lat, max_lon, max_lat = bbox
     center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
 
-    m = folium.Map(location=center, zoom_start=13, tiles="CartoDB positron")
+    m = folium.Map(location=center, zoom_start=13, tiles=None)
+
+    # ── Base tile layers (toggled via top-right control) ──────────────────────
+    folium.TileLayer(
+        tiles="CartoDB positron",
+        name="🗺️ Street Map",
+        control=True,
+        show=True,
+    ).add_to(m)
+    folium.TileLayer(
+        tiles=(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/"
+            "World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        ),
+        attr=(
+            "Esri, DigitalGlobe, GeoEye, Earthstar Geographics, "
+            "CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, GIS User Community"
+        ),
+        name="🛰️ Satellite",
+        overlay=False,
+        control=True,
+        show=False,
+    ).add_to(m)
 
     if gdf is None or gdf.empty:
+        folium.LayerControl(position="topright", collapsed=False).add_to(m)
         m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
         return m
 
@@ -320,6 +343,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             tooltip=f"{addr}  |  Score {score:.0f}  |  {u_con}–{u_opt} units",
         ).add_to(m)
 
+    folium.LayerControl(position="topright", collapsed=False).add_to(m)
     m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
     return m
 

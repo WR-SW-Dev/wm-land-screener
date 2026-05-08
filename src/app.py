@@ -139,6 +139,15 @@ def load_data(city_key: str):
     return df, gdf
 
 
+@st.cache_data(ttl=300)
+def load_wetlands_overlay(city_key: str) -> gpd.GeoDataFrame:
+    """Load cached wetland polygons for the map overlay."""
+    path = ROOT / "data" / "raw" / f"{city_key}_wetlands.geojson"
+    if not path.exists():
+        return gpd.GeoDataFrame()
+    return gpd.read_file(path)
+
+
 def run_pipeline(city_key: str, force: bool = False):
     """Run the pipeline as a subprocess and stream output into the UI."""
     cmd = [sys.executable, str(ROOT / "src" / "pipeline.py"), "--city", city_key]
@@ -168,18 +177,60 @@ def run_pipeline(city_key: str, force: bool = False):
 
 
 def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
-             mode_label: str = "Single-Family") -> folium.Map:
+             mode_label: str = "Single-Family",
+             wetlands_gdf: gpd.GeoDataFrame = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     min_lon, min_lat, max_lon, max_lat = bbox
     center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
 
-    m = folium.Map(location=center, zoom_start=13, tiles="CartoDB positron")
+    m = folium.Map(location=center, zoom_start=13, tiles=None)
+
+    # ── Base tile layers (toggled via top-right control) ──────────────────────
+    folium.TileLayer(
+        tiles="CartoDB positron",
+        name="🗺️ Street Map",
+        control=True,
+        show=True,
+    ).add_to(m)
+    folium.TileLayer(
+        tiles=(
+            "https://server.arcgisonline.com/ArcGIS/rest/services/"
+            "World_Imagery/MapServer/tile/{z}/{y}/{x}"
+        ),
+        attr=(
+            "Esri, DigitalGlobe, GeoEye, Earthstar Geographics, "
+            "CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, GIS User Community"
+        ),
+        name="🛰️ Satellite",
+        overlay=False,
+        control=True,
+        show=False,
+    ).add_to(m)
+
+    # ── Wetland overlay (off by default — toggle in layer control) ───────────────
+    if wetlands_gdf is not None and not wetlands_gdf.empty:
+        wetland_group = folium.FeatureGroup(name="💧 Wetlands", show=False)
+        folium.GeoJson(
+            wetlands_gdf.to_crs("EPSG:4326").__geo_interface__,
+            style_function=lambda _x: {
+                "fillColor":   "#38bdf8",   # sky blue
+                "color":       "#0369a1",   # darker blue border
+                "weight":      1,
+                "fillOpacity": 0.45,
+            },
+            tooltip="Wetland",
+        ).add_to(wetland_group)
+        wetland_group.add_to(m)
 
     if gdf is None or gdf.empty:
+        folium.LayerControl(position="topright", collapsed=False).add_to(m)
         m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
         return m
 
     gdf = gdf.to_crs("EPSG:4326")
+
+    # Group all parcel polygons into one toggleable layer
+    parcel_group = folium.FeatureGroup(name="📍 Parcels", show=True)
 
     for _, row in gdf.iterrows():
         if row.geometry is None or row.geometry.is_empty:
@@ -200,8 +251,9 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         wet    = float(row.get("wetland_pct", 0) or 0) * 100
         mf     = row.get("mf_permitted",  "") or ""
         adu    = row.get("adu_permitted", "") or ""
-        bldgs    = int(row.get("building_count", 0) or 0)
-        pathway  = str(row.get("dev_pathway", "") or "")
+        bldgs     = int(row.get("building_count", 0) or 0)
+        bldg_pct  = float(row.get("building_pct", 0) or 0) * 100
+        pathway   = str(row.get("dev_pathway", "") or "")
         # Future Land Use
         flu_code  = str(row.get("future_lu_code",  "") or "")
         flu_label = str(row.get("future_lu_label", "") or "")
@@ -210,8 +262,6 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         rezone_delta = int(row.get("rezoning_delta", 0) or 0)
         # Soil data
         soil_1 = str(row.get("soil_1", "") or "")
-        soil_2 = str(row.get("soil_2", "") or "")
-        soil_3 = str(row.get("soil_3", "") or "")
 
         # Tracker status badge
         _pid = str(row.get("parcel_id", "") or "")
@@ -274,6 +324,14 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
   <table style="width:100%;border-collapse:collapse;line-height:1.7;">
     <tr><td style="color:#888;">Acres</td>
         <td colspan="2">{acres:.2f} gross / {net:.2f} net dev</td></tr>
+    <tr><td style="color:#888;">Structures</td>
+        <td colspan="2">{
+            "<span style='color:#22c55e;font-weight:600;'>✅ Vacant (0 structures)</span>"
+            if bldgs == 0 else
+            f"<span style='color:#22c55e;font-weight:600;'>✅ Minor structure only ({bldgs} detected, {'< 0.1' if bldg_pct < 0.1 else f'{bldg_pct:.1f}'}% coverage)</span>"
+            if bldg_pct < 0.5 else
+            f"<span style='color:{'#f59e0b' if bldg_pct < 2 else '#ef4444'};font-weight:600;'>⚠️ {bldgs} structure{'s' if bldgs != 1 else ''} ({'< 0.1' if bldg_pct < 0.1 else f'{bldg_pct:.1f}'}% coverage)</span>"
+        }</td></tr>
     <tr><td style="color:#888;">Zone</td>
         <td colspan="2">{zone_c} — {zone_l}</td></tr>
     <tr><td style="color:#888;">Density ({"MF" if mode_label == "Multifamily" else "SF"})</td>
@@ -288,12 +346,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         <td colspan="2">{wet:.1f}%</td></tr>
     <tr><td style="color:#888;">MF / ADU</td>
         <td colspan="2">{mf} / {adu}</td></tr>
-    <tr><td style="color:#888;">Buildings</td>
-        <td colspan="2">{bldgs} footprint(s)</td></tr>
     {flu_row}
     {f"<tr><td style='color:#888;'>Soil</td><td colspan='2'>{soil_1}</td></tr>" if soil_1 else ""}
-    {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_2}</td></tr>" if soil_2 else ""}
-    {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_3}</td></tr>" if soil_3 else ""}
   </table>
   <hr style="margin:6px 0;">
   <div style="font-weight:600;margin-bottom:4px;">
@@ -318,8 +372,10 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             },
             popup=folium.Popup(popup_html, max_width=290),
             tooltip=f"{addr}  |  Score {score:.0f}  |  {u_con}–{u_opt} units",
-        ).add_to(m)
+        ).add_to(parcel_group)
 
+    parcel_group.add_to(m)
+    folium.LayerControl(position="topright", collapsed=False).add_to(m)
     m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
     return m
 
@@ -375,13 +431,15 @@ with st.sidebar:
         value=5.0,
         step=0.1,
         help=(
-            "Filters by how much of the parcel area is covered by buildings.\n\n"
-            "• **5.0% (default)** — no filter, shows all qualifying parcels\n"
-            "• **0.5%** — removes most parcels with a house (a 2,000 sqft home "
-            "on 5 acres ≈ 0.9% coverage)\n"
-            "• **0.0%** — no structures mapped in OSM at all\n\n"
-            "⚠️ OSM mapping is incomplete in rural areas — lower values are a "
-            "strong signal of vacant land but not a guarantee."
+            "Filters by how much of the parcel is covered by building footprints "
+            "(Microsoft satellite-derived data).\n\n"
+            "The pipeline hard filter already removes parcels above **5%** "
+            "(dense housing communities). This slider lets you tighten further:\n\n"
+            "• **5.0% (default)** — show all qualifying parcels\n"
+            "• **1.0%** — likely includes at most 1–2 structures "
+            "(e.g. a house on a large lot)\n"
+            "• **0.0%** — truly vacant: no structures detected at all\n\n"
+            "A single 2,000 sq ft home on 5 acres ≈ 0.9% coverage."
         ),
     )
 
@@ -599,7 +657,9 @@ if USE_MF and gdf_shown is not None and not gdf_shown.empty \
 
 # ── Map ───────────────────────────────────────────────────────────────────────
 _mode_label_map = "Multifamily" if USE_MF else "Single-Family"
-m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map)
+_wetlands_overlay = load_wetlands_overlay(city_key)
+m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
+             wetlands_gdf=_wetlands_overlay)
 st_folium(m, use_container_width=True, height=530, returned_objects=[])
 
 # ── Qualifying parcels table ──────────────────────────────────────────────────
@@ -607,16 +667,17 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
     display_cols = [
         "parcel_id", "address", "owner",
         "calc_acres", "net_dev_acres",
+        "building_count", "building_pct",   # vacancy indicators — shown early
         "zone_code", "zone_label",
         "dev_pathway",
         "max_units_per_acre", "units_conservative", "units_optimistic",
         "flood_pct", "wetland_pct",
         "shape_score",
-        "soil_1", "soil_2", "soil_3",
-        "building_count", "mf_permitted", "adu_permitted",
+        "soil_1",
+        "mf_permitted", "adu_permitted",
         # FLU columns (only shown when data is loaded — filtered below)
         "future_lu_label", "future_max_units", "rezoning_delta",
-        "score", "review_flag",
+        "score",
     ]
     display_cols = [c for c in display_cols if c in qual_filtered.columns]
     fmt = qual_filtered[display_cols].copy()
@@ -626,24 +687,19 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
         fmt["shape_score"] = (fmt["shape_score"] * 100).round(0).astype(int).astype(str) + "%"
         fmt = fmt.rename(columns={"shape_score": "Shape %"})
 
-    # Rename soil columns for readability
-    soil_rename = {"soil_1": "Dominant Soil", "soil_2": "Soil 2", "soil_3": "Soil 3"}
-    fmt = fmt.rename(columns={k: v for k, v in soil_rename.items() if k in fmt.columns})
-    # Drop Soil 2 / Soil 3 columns if entirely empty (keeps table clean when parcels have one soil)
-    for col in ["Soil 2", "Soil 3"]:
-        if col in fmt.columns and fmt[col].fillna("").eq("").all():
-            fmt = fmt.drop(columns=[col])
-
-    # Rename review_flag column for readability
-    if "review_flag" in fmt.columns:
-        fmt = fmt.rename(columns={"review_flag": "Needs Review"})
+    # Rename soil_1 column for readability
+    if "soil_1" in fmt.columns:
+        fmt = fmt.rename(columns={"soil_1": "Dominant Soil"})
 
     for col in ("calc_acres", "net_dev_acres"):
         if col in fmt.columns:
             fmt[col] = fmt[col].round(2)
-    for col in ("flood_pct", "wetland_pct"):
+    for col in ("flood_pct", "wetland_pct", "building_pct"):
         if col in fmt.columns:
             fmt[col] = (fmt[col] * 100).round(1).astype(str) + "%"
+    if "building_pct" in fmt.columns:
+        fmt = fmt.rename(columns={"building_pct": "Bldg Coverage %",
+                                   "building_count": "Structures"})
 
     # Add tracker columns
     _pid_col = "parcel_id" if "parcel_id" in fmt.columns else None

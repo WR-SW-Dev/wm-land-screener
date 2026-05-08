@@ -78,13 +78,16 @@ def apply_hard_filters(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         p.loc[is_exempt & p["pass_filter"], "filter_reason"] = "Exempt parcel (class 701)"
         p.loc[is_exempt, "pass_filter"] = False
 
-    # 1% building coverage threshold: filters clearly-improved parcels while
-    # ignoring trivial OSM footprints (docks, sheds, utility structures).
-    BUILDING_PCT_THRESHOLD = 0.01
+    # 5% building coverage threshold — calibrated to allow a single home on a
+    # large parcel (typically 0.3–2% coverage) while eliminating housing
+    # communities and dense subdivisions (typically 8–30% coverage).
+    # Example: 1 house (2,000 sq ft) on 5 acres ≈ 0.9% → passes.
+    #          10 homes on 5 acres ≈ 9% → fails.
+    BUILDING_PCT_THRESHOLD = 0.05
     if "building_pct" in p.columns:
         has_buildings = p["building_pct"] > BUILDING_PCT_THRESHOLD
         p.loc[has_buildings & p["pass_filter"], "filter_reason"] = (
-            "Improved parcel (building footprint present)"
+            f"Substantially improved (>{BUILDING_PCT_THRESHOLD*100:.0f}% building coverage)"
         )
         p.loc[has_buildings, "pass_filter"] = False
     else:

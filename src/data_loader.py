@@ -2,13 +2,17 @@
 Download parcel, zoning, floodplain, wetland, and building footprint data.
 All functions return a GeoDataFrame in EPSG:4326 (WGS84).
 """
+import csv
+import gzip as _gzip_mod
+import io
 import json
+import math
 import time
-import requests
+from pathlib import Path
+
 import geopandas as gpd
 import pandas as pd
-from pathlib import Path
-import io
+import requests
 import shapely.ops
 from shapely.geometry import box, shape, Polygon
 
@@ -218,15 +222,106 @@ def load_wetlands(bbox: tuple, city_key: str, force_download: bool = False) -> g
     return gdf
 
 
-# ── Building footprints (OSM Overpass) ────────────────────────────────────────
+# ── Building footprints (Microsoft Global ML Building Footprints) ──────────────
+#
+# Microsoft released satellite-derived building footprints for the entire US as
+# open data. Coverage is far more complete than OpenStreetMap, including suburban
+# housing communities that OSM has never mapped.
+#
+# Data is stored as quadkey-indexed GeoJSON.gz tiles at zoom level 9.
+# We download only the tiles that intersect our bounding box and cache the result.
+# Falls back to OSM Overpass if the Microsoft service is unreachable.
+#
+# Dataset: https://github.com/microsoft/GlobalMLBuildingFootprints
+# Index:   https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+_MS_DATASET_CSV_URL = (
+    "https://minedbuildings.z5.web.core.windows.net/global-buildings/dataset-links.csv"
+)
+_MS_INDEX_CACHE = DATA_RAW / "ms_buildings_index.csv"
+
+OVERPASS_URL = "https://overpass-api.de/api/interpreter"  # kept for OSM fallback
+
+
+def _lat_lon_to_tile(lat: float, lon: float, zoom: int):
+    """Convert WGS84 lat/lon to tile (x, y) at the given zoom level."""
+    n = 2 ** zoom
+    x = int((lon + 180.0) / 360.0 * n)
+    lat_r = math.radians(lat)
+    y = int(
+        (1.0 - math.log(math.tan(lat_r) + 1.0 / math.cos(lat_r)) / math.pi)
+        / 2.0 * n
+    )
+    return x, y
+
+
+def _tile_to_quadkey(x: int, y: int, zoom: int) -> str:
+    """Convert tile (x, y, zoom) to a Bing Maps quadkey string."""
+    qk = []
+    for i in range(zoom, 0, -1):
+        digit = 0
+        mask = 1 << (i - 1)
+        if x & mask:
+            digit += 1
+        if y & mask:
+            digit += 2
+        qk.append(str(digit))
+    return "".join(qk)
+
+
+def _bbox_to_quadkeys(min_lon: float, min_lat: float,
+                      max_lon: float, max_lat: float,
+                      zoom: int = 9) -> list:
+    """Return every quadkey at <zoom> whose tile intersects the bounding box."""
+    x1, y1 = _lat_lon_to_tile(max_lat, min_lon, zoom)   # NW corner
+    x2, y2 = _lat_lon_to_tile(min_lat, max_lon, zoom)   # SE corner
+    return [
+        _tile_to_quadkey(x, y, zoom)
+        for x in range(min(x1, x2), max(x1, x2) + 1)
+        for y in range(min(y1, y2), max(y1, y2) + 1)
+    ]
+
+
+def _load_ms_index(force_download: bool = False) -> dict:
+    """
+    Return a dict mapping QuadKey → download URL.
+    Downloads and caches the Microsoft dataset-links CSV.
+    On normal pipeline runs the cached index is reused; --refresh re-downloads it.
+    """
+    if _MS_INDEX_CACHE.exists() and not force_download:
+        with open(_MS_INDEX_CACHE, newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            return {
+                (row.get("QuadKey") or row.get("quadkey", "")).strip():
+                (row.get("Url")      or row.get("url",      "")).strip()
+                for row in reader
+                if (row.get("QuadKey") or row.get("quadkey", "")).strip()
+            }
+
+    print("  Downloading Microsoft Building Footprints index ...")
+    resp = requests.get(_MS_DATASET_CSV_URL, timeout=60)
+    resp.raise_for_status()
+    _MS_INDEX_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    _MS_INDEX_CACHE.write_bytes(resp.content)
+
+    reader = csv.DictReader(resp.text.splitlines())
+    return {
+        (row.get("QuadKey") or row.get("quadkey", "")).strip():
+        (row.get("Url")      or row.get("url",      "")).strip()
+        for row in reader
+        if (row.get("QuadKey") or row.get("quadkey", "")).strip()
+    }
+
 
 def load_buildings(bbox: tuple, city_key: str, force_download: bool = False) -> gpd.GeoDataFrame:
     """
-    Fetch building footprint polygons from OpenStreetMap via Overpass API.
-    Returns a GeoDataFrame of building polygons in EPSG:4326.
+    Fetch building footprint polygons from Microsoft Global ML Building Footprints.
+    Downloads only the quadkey tiles (zoom 9) that cover the bounding box.
+    Falls back to OpenStreetMap Overpass if Microsoft data is unreachable.
     Caches to data/raw/<city_key>_buildings.geojson.
+
+    NOTE: After upgrading from the old OSM-based build, run the pipeline once
+    with --refresh to replace the cached OSM footprints with Microsoft data.
     """
     cache = DATA_RAW / f"{city_key}_buildings.geojson"
 
@@ -234,9 +329,60 @@ def load_buildings(bbox: tuple, city_key: str, force_download: bool = False) -> 
         print(f"  Loading buildings from cache: {cache.name}")
         return gpd.read_file(cache)
 
+    min_lon, min_lat, max_lon, max_lat = bbox
+    quadkeys = _bbox_to_quadkeys(min_lon, min_lat, max_lon, max_lat, zoom=9)
+    print(f"  Fetching Microsoft Building Footprints "
+          f"({len(quadkeys)} quadkey tile(s): {', '.join(quadkeys)}) ...")
+
+    try:
+        qk_to_url = _load_ms_index(force_download=force_download)
+    except Exception as e:
+        print(f"  [warn] Microsoft buildings index unavailable: {e}")
+        print("  Falling back to OSM building footprints ...")
+        return _load_buildings_osm(bbox, city_key, cache)
+
+    bbox_geom = box(min_lon, min_lat, max_lon, max_lat)
+    frames = []
+
+    for qk in quadkeys:
+        url = qk_to_url.get(qk, "")
+        if not url:
+            print(f"  [info] Quadkey {qk}: no coverage in Microsoft dataset")
+            continue
+        try:
+            r = requests.get(url, timeout=120)
+            r.raise_for_status()
+            raw = _gzip_mod.decompress(r.content) if url.endswith(".gz") else r.content
+            tile_gdf = gpd.read_file(io.BytesIO(raw))
+            if tile_gdf.empty:
+                continue
+            tile_gdf = (tile_gdf.set_crs("EPSG:4326") if tile_gdf.crs is None
+                        else tile_gdf.to_crs("EPSG:4326"))
+            clipped = tile_gdf[tile_gdf.geometry.intersects(bbox_geom)][["geometry"]]
+            if not clipped.empty:
+                frames.append(clipped)
+                print(f"  Quadkey {qk}: {len(clipped)} building footprints")
+        except Exception as e:
+            print(f"  [warn] Quadkey {qk} download failed: {e}")
+
+    if not frames:
+        print("  [info] No Microsoft footprints found — falling back to OSM")
+        return _load_buildings_osm(bbox, city_key, cache)
+
+    gdf = gpd.GeoDataFrame(pd.concat(frames, ignore_index=True), crs="EPSG:4326")
+    gdf.to_file(cache, driver="GeoJSON")
+    print(f"  Saved {len(gdf)} Microsoft building footprints to {cache.name}")
+    return gdf
+
+
+def _load_buildings_osm(bbox: tuple, city_key: str,
+                        cache: Path = None) -> gpd.GeoDataFrame:
+    """
+    Fallback: fetch building footprints from OpenStreetMap via Overpass API.
+    Used when the Microsoft dataset is unreachable.
+    """
     print(f"  Downloading OSM building footprints for {city_key} ...")
     min_lon, min_lat, max_lon, max_lat = bbox
-    # Overpass bbox format: (south, west, north, east)
     query = f"""
 [out:json][timeout:120];
 (
@@ -257,19 +403,17 @@ out skel qt;
 
     elements = data.get("elements", [])
     if not elements:
-        print("  [info] No building footprints found in area")
+        print("  [info] No OSM building footprints found in area")
         return gpd.GeoDataFrame()
 
-    # Build a node-id → (lon, lat) lookup
     nodes = {el["id"]: (el["lon"], el["lat"])
              for el in elements if el["type"] == "node"}
-
     features = []
     for el in elements:
         if el["type"] != "way":
             continue
         coords = [nodes[nid] for nid in el.get("nodes", []) if nid in nodes]
-        if len(coords) < 4:   # need at least 3 unique + closing node
+        if len(coords) < 4:
             continue
         try:
             poly = Polygon(coords)
@@ -277,21 +421,16 @@ out skel qt;
                 continue
         except Exception:
             continue
-        tags = el.get("tags", {})
-        features.append({
-            "geometry": poly,
-            "osm_id":   el["id"],
-            "building": tags.get("building", "yes"),
-            "name":     tags.get("name", ""),
-        })
+        features.append({"geometry": poly})
 
     if not features:
-        print("  [info] No valid building polygons after parsing")
+        print("  [info] No valid OSM building polygons after parsing")
         return gpd.GeoDataFrame()
 
     gdf = gpd.GeoDataFrame(features, crs="EPSG:4326")
-    gdf.to_file(cache, driver="GeoJSON")
-    print(f"  Saved {len(gdf)} building footprints to {cache.name}")
+    if cache is not None:
+        gdf.to_file(cache, driver="GeoJSON")
+        print(f"  Saved {len(gdf)} OSM building footprints to {cache.name}")
     return gdf
 
 

@@ -226,8 +226,9 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         wet    = float(row.get("wetland_pct", 0) or 0) * 100
         mf     = row.get("mf_permitted",  "") or ""
         adu    = row.get("adu_permitted", "") or ""
-        bldgs    = int(row.get("building_count", 0) or 0)
-        pathway  = str(row.get("dev_pathway", "") or "")
+        bldgs     = int(row.get("building_count", 0) or 0)
+        bldg_pct  = float(row.get("building_pct", 0) or 0) * 100
+        pathway   = str(row.get("dev_pathway", "") or "")
         # Future Land Use
         flu_code  = str(row.get("future_lu_code",  "") or "")
         flu_label = str(row.get("future_lu_label", "") or "")
@@ -300,6 +301,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
   <table style="width:100%;border-collapse:collapse;line-height:1.7;">
     <tr><td style="color:#888;">Acres</td>
         <td colspan="2">{acres:.2f} gross / {net:.2f} net dev</td></tr>
+    <tr><td style="color:#888;">Structures</td>
+        <td colspan="2">{"<span style='color:#22c55e;font-weight:600;'>✅ Vacant (0 structures)</span>" if bldgs == 0 else f"<span style='color:{'#f59e0b' if bldg_pct < 2 else '#ef4444'};font-weight:600;'>⚠️ {bldgs} structure{'s' if bldgs != 1 else ''} ({bldg_pct:.1f}% coverage)</span>"}</td></tr>
     <tr><td style="color:#888;">Zone</td>
         <td colspan="2">{zone_c} — {zone_l}</td></tr>
     <tr><td style="color:#888;">Density ({"MF" if mode_label == "Multifamily" else "SF"})</td>
@@ -314,8 +317,6 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         <td colspan="2">{wet:.1f}%</td></tr>
     <tr><td style="color:#888;">MF / ADU</td>
         <td colspan="2">{mf} / {adu}</td></tr>
-    <tr><td style="color:#888;">Buildings</td>
-        <td colspan="2">{bldgs} footprint(s)</td></tr>
     {flu_row}
     {f"<tr><td style='color:#888;'>Soil</td><td colspan='2'>{soil_1}</td></tr>" if soil_1 else ""}
     {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_2}</td></tr>" if soil_2 else ""}
@@ -403,13 +404,15 @@ with st.sidebar:
         value=5.0,
         step=0.1,
         help=(
-            "Filters by how much of the parcel area is covered by buildings.\n\n"
-            "• **5.0% (default)** — no filter, shows all qualifying parcels\n"
-            "• **0.5%** — removes most parcels with a house (a 2,000 sqft home "
-            "on 5 acres ≈ 0.9% coverage)\n"
-            "• **0.0%** — no structures mapped in OSM at all\n\n"
-            "⚠️ OSM mapping is incomplete in rural areas — lower values are a "
-            "strong signal of vacant land but not a guarantee."
+            "Filters by how much of the parcel is covered by building footprints "
+            "(Microsoft satellite-derived data).\n\n"
+            "The pipeline hard filter already removes parcels above **5%** "
+            "(dense housing communities). This slider lets you tighten further:\n\n"
+            "• **5.0% (default)** — show all qualifying parcels\n"
+            "• **1.0%** — likely includes at most 1–2 structures "
+            "(e.g. a house on a large lot)\n"
+            "• **0.0%** — truly vacant: no structures detected at all\n\n"
+            "A single 2,000 sq ft home on 5 acres ≈ 0.9% coverage."
         ),
     )
 
@@ -635,13 +638,14 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
     display_cols = [
         "parcel_id", "address", "owner",
         "calc_acres", "net_dev_acres",
+        "building_count", "building_pct",   # vacancy indicators — shown early
         "zone_code", "zone_label",
         "dev_pathway",
         "max_units_per_acre", "units_conservative", "units_optimistic",
         "flood_pct", "wetland_pct",
         "shape_score",
         "soil_1", "soil_2", "soil_3",
-        "building_count", "mf_permitted", "adu_permitted",
+        "mf_permitted", "adu_permitted",
         # FLU columns (only shown when data is loaded — filtered below)
         "future_lu_label", "future_max_units", "rezoning_delta",
         "score", "review_flag",
@@ -669,9 +673,12 @@ with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expan
     for col in ("calc_acres", "net_dev_acres"):
         if col in fmt.columns:
             fmt[col] = fmt[col].round(2)
-    for col in ("flood_pct", "wetland_pct"):
+    for col in ("flood_pct", "wetland_pct", "building_pct"):
         if col in fmt.columns:
             fmt[col] = (fmt[col] * 100).round(1).astype(str) + "%"
+    if "building_pct" in fmt.columns:
+        fmt = fmt.rename(columns={"building_pct": "Bldg Coverage %",
+                                   "building_count": "Structures"})
 
     # Add tracker columns
     _pid_col = "parcel_id" if "parcel_id" in fmt.columns else None

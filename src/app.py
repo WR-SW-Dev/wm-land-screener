@@ -285,9 +285,9 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         # Build score bar rows for each component
         score_bars = ""
         for comp in SCORE_COMPONENTS:
-            pts     = float(row.get(comp["key"], 0) or 0)
+            pts     = min(float(row.get(comp["key"], 0) or 0), comp["max"])
             max_pts = comp["max"]
-            pct     = int(pts / max_pts * 100) if max_pts else 0
+            pct     = min(int(pts / max_pts * 100), 100) if max_pts else 0
             bar_color = COLOR_HIGH if pct >= 80 else (COLOR_MED if pct >= 40 else COLOR_LOW)
             score_bars += f"""
     <tr>
@@ -836,9 +836,9 @@ if not qual_filtered.empty and all(k in qual_filtered.columns for k in comp_keys
 
             cols = st.columns(len(SCORE_COMPONENTS))
             for col_ui, comp in zip(cols, SCORE_COMPONENTS):
-                pts     = float(row.get(comp["key"], 0) or 0)
+                pts     = min(float(row.get(comp["key"], 0) or 0), comp["max"])
                 max_pts = comp["max"]
-                pct     = pts / max_pts if max_pts else 0
+                pct     = min(pts / max_pts, 1.0) if max_pts else 0
                 bar_col = COLOR_HIGH if pct >= 0.8 else (COLOR_MED if pct >= 0.4 else COLOR_LOW)
                 col_ui.markdown(
                     f"<div style='font-size:11px;color:#888;margin-bottom:2px;'>"

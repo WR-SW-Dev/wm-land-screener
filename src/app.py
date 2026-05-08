@@ -302,7 +302,13 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
     <tr><td style="color:#888;">Acres</td>
         <td colspan="2">{acres:.2f} gross / {net:.2f} net dev</td></tr>
     <tr><td style="color:#888;">Structures</td>
-        <td colspan="2">{"<span style='color:#22c55e;font-weight:600;'>✅ Vacant (0 structures)</span>" if bldgs == 0 else f"<span style='color:{'#f59e0b' if bldg_pct < 2 else '#ef4444'};font-weight:600;'>⚠️ {bldgs} structure{'s' if bldgs != 1 else ''} ({bldg_pct:.1f}% coverage)</span>"}</td></tr>
+        <td colspan="2">{
+            "<span style='color:#22c55e;font-weight:600;'>✅ Vacant (0 structures)</span>"
+            if bldgs == 0 else
+            f"<span style='color:#22c55e;font-weight:600;'>✅ Minor structure only ({bldgs} detected, {'< 0.1' if bldg_pct < 0.1 else f'{bldg_pct:.1f}'}% coverage)</span>"
+            if bldg_pct < 0.5 else
+            f"<span style='color:{'#f59e0b' if bldg_pct < 2 else '#ef4444'};font-weight:600;'>⚠️ {bldgs} structure{'s' if bldgs != 1 else ''} ({'< 0.1' if bldg_pct < 0.1 else f'{bldg_pct:.1f}'}% coverage)</span>"
+        }</td></tr>
     <tr><td style="color:#888;">Zone</td>
         <td colspan="2">{zone_c} — {zone_l}</td></tr>
     <tr><td style="color:#888;">Density ({"MF" if mode_label == "Multifamily" else "SF"})</td>

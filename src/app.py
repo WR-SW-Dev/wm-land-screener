@@ -139,6 +139,15 @@ def load_data(city_key: str):
     return df, gdf
 
 
+@st.cache_data(ttl=300)
+def load_wetlands_overlay(city_key: str) -> gpd.GeoDataFrame:
+    """Load cached wetland polygons for the map overlay."""
+    path = ROOT / "data" / "raw" / f"{city_key}_wetlands.geojson"
+    if not path.exists():
+        return gpd.GeoDataFrame()
+    return gpd.read_file(path)
+
+
 def run_pipeline(city_key: str, force: bool = False):
     """Run the pipeline as a subprocess and stream output into the UI."""
     cmd = [sys.executable, str(ROOT / "src" / "pipeline.py"), "--city", city_key]
@@ -168,7 +177,8 @@ def run_pipeline(city_key: str, force: bool = False):
 
 
 def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
-             mode_label: str = "Single-Family") -> folium.Map:
+             mode_label: str = "Single-Family",
+             wetlands_gdf: gpd.GeoDataFrame = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     min_lon, min_lat, max_lon, max_lat = bbox
     center = [(min_lat + max_lat) / 2, (min_lon + max_lon) / 2]
@@ -196,6 +206,21 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         control=True,
         show=False,
     ).add_to(m)
+
+    # ── Wetland overlay (off by default — toggle in layer control) ───────────────
+    if wetlands_gdf is not None and not wetlands_gdf.empty:
+        wetland_group = folium.FeatureGroup(name="💧 Wetlands", show=False)
+        folium.GeoJson(
+            wetlands_gdf.to_crs("EPSG:4326").__geo_interface__,
+            style_function=lambda _x: {
+                "fillColor":   "#38bdf8",   # sky blue
+                "color":       "#0369a1",   # darker blue border
+                "weight":      1,
+                "fillOpacity": 0.45,
+            },
+            tooltip="Wetland",
+        ).add_to(wetland_group)
+        wetland_group.add_to(m)
 
     if gdf is None or gdf.empty:
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
@@ -636,7 +661,9 @@ if USE_MF and gdf_shown is not None and not gdf_shown.empty \
 
 # ── Map ───────────────────────────────────────────────────────────────────────
 _mode_label_map = "Multifamily" if USE_MF else "Single-Family"
-m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map)
+_wetlands_overlay = load_wetlands_overlay(city_key)
+m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
+             wetlands_gdf=_wetlands_overlay)
 st_folium(m, use_container_width=True, height=530, returned_objects=[])
 
 # ── Qualifying parcels table ──────────────────────────────────────────────────

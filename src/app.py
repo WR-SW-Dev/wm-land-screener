@@ -262,8 +262,6 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         rezone_delta = int(row.get("rezoning_delta", 0) or 0)
         # Soil data
         soil_1 = str(row.get("soil_1", "") or "")
-        soil_2 = str(row.get("soil_2", "") or "")
-        soil_3 = str(row.get("soil_3", "") or "")
 
         # Tracker status badge
         _pid = str(row.get("parcel_id", "") or "")
@@ -350,8 +348,6 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         <td colspan="2">{mf} / {adu}</td></tr>
     {flu_row}
     {f"<tr><td style='color:#888;'>Soil</td><td colspan='2'>{soil_1}</td></tr>" if soil_1 else ""}
-    {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_2}</td></tr>" if soil_2 else ""}
-    {f"<tr><td style='color:#888;'></td><td colspan='2' style='color:#666;font-size:12px;'>{soil_3}</td></tr>" if soil_3 else ""}
   </table>
   <hr style="margin:6px 0;">
   <div style="font-weight:600;margin-bottom:4px;">

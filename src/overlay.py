@@ -185,7 +185,7 @@ def add_building_coverage(parcels: gpd.GeoDataFrame,
 
     joined = gpd.sjoin(p_proj[["_pidx", "geometry"]], b_proj,
                        how="left", predicate="intersects")
-    count_per_parcel = joined.groupby("_pidx").size()
+    count_per_parcel = joined[joined["index_right"].notna()].groupby("_pidx").size()
 
     # Footprint area fraction via intersection
     intersected = gpd.overlay(

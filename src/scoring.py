@@ -9,6 +9,7 @@ from config import (
     WETLAND_PENALTY_PCT,
     VACANT_USE_CODES,
     GRAND_HAVEN_ZONING,
+    EXCLUDED_OWNER_PATTERNS,
 )
 from ordinance import load_ordinance, get_review_flags, ordinance_url
 
@@ -49,7 +50,7 @@ def get_zone_label(zone_code: str, zoning_table: dict = None) -> str:
 
 # ── Hard filters ──────────────────────────────────────────────────────────────
 
-def apply_hard_filters(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+def apply_hard_filters(parcels: gpd.GeoDataFrame, min_acres: float = 2.0) -> gpd.GeoDataFrame:
     """
     Mark each parcel as feasible (pass=True) or not.
     Adds a 'filter_reason' column explaining the first failure.
@@ -57,6 +58,14 @@ def apply_hard_filters(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     p = parcels.copy()
     p["pass_filter"] = True
     p["filter_reason"] = ""
+
+    # 0. Minimum parcel size
+    if "calc_acres" in p.columns:
+        too_small = p["calc_acres"] < min_acres
+        p.loc[too_small & p["pass_filter"], "filter_reason"] = (
+            f"Too small (<{min_acres} acres)"
+        )
+        p.loc[too_small, "pass_filter"] = False
 
     # 1. Floodplain coverage
     if "flood_pct" in p.columns:
@@ -78,6 +87,18 @@ def apply_hard_filters(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         p.loc[is_exempt & p["pass_filter"], "filter_reason"] = "Exempt parcel (class 701)"
         p.loc[is_exempt, "pass_filter"] = False
 
+    # Excluded owner patterns — golf courses, public schools, conservancies, etc.
+    # Configured in config.py: EXCLUDED_OWNER_PATTERNS
+    owner_col = _find_col(p, ["ownername", "owner", "owner_name", "taxpayer"])
+    if owner_col and EXCLUDED_OWNER_PATTERNS:
+        owner_upper = p[owner_col].astype(str).str.upper()
+        for pattern in EXCLUDED_OWNER_PATTERNS:
+            is_excluded = owner_upper.str.contains(pattern.upper(), na=False)
+            p.loc[is_excluded & p["pass_filter"], "filter_reason"] = (
+                f"Excluded owner: {pattern}"
+            )
+            p.loc[is_excluded, "pass_filter"] = False
+
     # 5% building coverage threshold — calibrated to allow a single home on a
     # large parcel (typically 0.3–2% coverage) while eliminating housing
     # communities and dense subdivisions (typically 8–30% coverage).
@@ -90,6 +111,20 @@ def apply_hard_filters(parcels: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
             f"Substantially improved (>{BUILDING_PCT_THRESHOLD*100:.0f}% building coverage)"
         )
         p.loc[has_buildings, "pass_filter"] = False
+
+        # Building count threshold — catches existing residential neighborhoods
+        # where large lots keep per-parcel coverage low (e.g. 5 homes at 0.3%
+        # each = 1.6% total, below the 5% threshold). 3+ structures with any
+        # detected coverage = occupied development, not a vacant site.
+        if "building_count" in p.columns:
+            multi_structure = (
+                (p["building_count"] >= 3) & (p["building_pct"] > 0)
+            )
+            p.loc[multi_structure & p["pass_filter"], "filter_reason"] = (
+                "Existing residential development (3+ structures detected)"
+            )
+            p.loc[multi_structure, "pass_filter"] = False
+
     else:
         # Fallback: SEV/acre proxy ($150k/acre → likely has structures)
         SEV_PER_ACRE_THRESHOLD = 150_000
@@ -136,19 +171,24 @@ def _find_col(df: pd.DataFrame, candidates: list):
 SCORE_COMPONENTS = [
     {"key": "pts_density",   "label": "Zoning density",     "max": 40,
      "description": "Single-family units/acre allowed by zoning. Full credit at 7 u/ac (realistic SF ceiling). Anything above 7 is capped at 40 pts."},
-    {"key": "pts_rezoning",  "label": "Rezoning potential",  "max": 20,
-     "description": (
-         "Master plan future land use shows higher density than current zoning. "
-         "Scales 0–20 pts based on the density gap (full credit at +15 u/ac upside). "
-         "Only awarded when FLU data is available; 0 pts when not loaded."
-     )},
-    {"key": "pts_wetland",   "label": "Wetland coverage",    "max": 15,
+    {"key": "pts_wetland",   "label": "Wetland coverage",    "max": 25,
      "description": "Full credit ≤10% wetland. Scales to 0 at 50% coverage."},
-    {"key": "pts_flood",     "label": "Floodplain coverage", "max": 15,
+    {"key": "pts_flood",     "label": "Floodplain coverage", "max": 25,
      "description": "Full credit at 0% flood. Scales to 0 at the 25% hard-filter ceiling."},
     {"key": "pts_shape",     "label": "Parcel shape",        "max": 10,
      "description": "How square/compact the parcel is. Higher score = more rectangular and development-friendly. Lower score = skinny, irregular, or oddly shaped."},
+    # Rezoning is a bonus — does not count against parcels that lack FLU upside.
+    # Displayed separately in the popup; can push total score above 100.
+    {"key": "pts_rezoning",  "label": "Rezoning bonus ✨",   "max": 10, "bonus": True,
+     "description": (
+         "Bonus points when the Ottawa County Master Plan shows higher density than "
+         "current zoning. Scales 0–10 pts based on the gap (full credit at +15 u/ac). "
+         "Never penalizes parcels that already have the right zoning."
+     )},
 ]
+
+# Max base score (excluding rezoning bonus) — used to normalise to 0-100
+_BASE_MAX = 100  # pts_density(40) + pts_wetland(25) + pts_flood(25) + pts_shape(10)
 
 
 def score_components(row: pd.Series) -> dict:
@@ -164,7 +204,7 @@ def score_components(row: pd.Series) -> dict:
     flu_code       = str(row.get("future_lu_code", "")).strip()
     rezoning_delta = float(row.get("rezoning_delta", 0) or 0)
     if flu_code and rezoning_delta > 0:
-        pts_rezoning = round(min(rezoning_delta / 15.0, 1.0) * 20, 1)
+        pts_rezoning = round(min(rezoning_delta / 15.0, 1.0) * 10, 1)
     else:
         pts_rezoning = 0.0
 
@@ -174,11 +214,11 @@ def score_components(row: pd.Series) -> dict:
         wet_frac = 1.0
     else:
         wet_frac = max(0.0, 1 - (wetland_pct - WETLAND_PENALTY_PCT) / 0.4)
-    pts_wetland = round(wet_frac * 15, 1)
+    pts_wetland = round(wet_frac * 25, 1)
 
-    # 4. Floodplain coverage (0-15 pts)
+    # 4. Floodplain coverage (0-25 pts)
     flood_pct = row.get("flood_pct", 0)
-    pts_flood = round(max(0.0, 1 - flood_pct / MAX_FLOOD_PCT) * 15, 1)
+    pts_flood = round(max(0.0, 1 - flood_pct / MAX_FLOOD_PCT) * 25, 1)
 
     # 5. Parcel shape compactness (0-10 pts)
     # Uses the isoperimetric quotient: 4π × area / perimeter²
@@ -190,19 +230,25 @@ def score_components(row: pd.Series) -> dict:
     # regardless of formula edge cases or stale cached data.
     return {
         "pts_density":  min(pts_density,  40.0),
-        "pts_rezoning": min(pts_rezoning, 20.0),
-        "pts_wetland":  min(pts_wetland,  15.0),
-        "pts_flood":    min(pts_flood,    15.0),
+        "pts_rezoning": min(pts_rezoning, 10.0),
+        "pts_wetland":  min(pts_wetland,  25.0),
+        "pts_flood":    min(pts_flood,    25.0),
         "pts_shape":    min(pts_shape,    10.0),
     }
 
 
 def score_parcel(row: pd.Series) -> float:
     """
-    Compute total 0-100 feasibility score.
+    Compute feasibility score. Base components (density, wetland, flood, shape)
+    are normalised to 0-100. Rezoning is a bonus added on top — score can
+    exceed 100 for parcels with master plan upside. Never penalises parcels
+    that lack rezoning potential.
     Only called for parcels that pass hard filters.
     """
-    return round(min(sum(score_components(row).values()), 100), 1)
+    comps = score_components(row)
+    base_raw   = comps["pts_density"] + comps["pts_wetland"] + comps["pts_flood"] + comps["pts_shape"]
+    base_score = round(base_raw / _BASE_MAX * 100, 1)
+    return round(base_score + comps["pts_rezoning"], 1)
 
 
 # ── Development pathway classification ────────────────────────────────────────
@@ -261,7 +307,7 @@ def _classify_dev_pathway(row: pd.Series, ordinance: dict,
 
 
 def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
-               city_key: str = None) -> gpd.GeoDataFrame:
+               city_key: str = None, min_acres: float = 2.0) -> gpd.GeoDataFrame:
     """
     Add max_units_per_acre, zone_label, density estimates, score, score components,
     review flags, and ordinance URLs.
@@ -270,6 +316,7 @@ def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
       Defaults to GRAND_HAVEN_ZONING for backwards compatibility.
     city_key: used to load the ordinance JSON for review flag logic.
       When None or no ordinance file exists, review columns are empty.
+    min_acres: parcels below this size are hard-filtered out.
     """
     p = parcels.copy()
 
@@ -311,7 +358,7 @@ def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
     )
 
     # ── Hard filters (includes "Not viable" pathway check) ────────────────────
-    p = apply_hard_filters(p)
+    p = apply_hard_filters(p, min_acres=min_acres)
 
     # Score + per-component breakdown for passing parcels only
     mask = p["pass_filter"]
@@ -342,6 +389,26 @@ def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
         p["review_flag"]    = False
         p["review_reasons"] = ""
         p["ordinance_url"]  = ""
+
+    # ── Assessor "improved" flag (no satellite building detected) ─────────────
+    # When the assessor classifies a parcel as improved but Microsoft Building
+    # Footprints found 0% coverage, flag for manual review. "Improved" can mean
+    # an actual building OR a parking lot, car wash, storage yard, etc. —
+    # so we don't hard-filter, just warn.
+    desc_col = _find_col(p, ["propertyclassdescription", "classdescription", "class_desc"])
+    if desc_col and "building_pct" in p.columns:
+        assessor_improved = (
+            p[desc_col].astype(str).str.upper().str.contains("IMPROVED", na=False)
+            & (p["building_pct"].fillna(0) == 0)
+            & p["pass_filter"]
+        )
+        if assessor_improved.any():
+            flag_text = "Assessor says improved but no building detected — confirm vacant or parking/storage only"
+            p.loc[assessor_improved, "review_flag"] = True
+            p.loc[assessor_improved, "review_reasons"] = p.loc[assessor_improved, "review_reasons"].apply(
+                lambda r: (r + " | " + flag_text).lstrip(" | ") if r else flag_text
+            )
+            print(f"  Assessor-improved flags: {assessor_improved.sum()} parcels flagged for verification")
 
     # ── Pathway count summary ─────────────────────────────────────────────────
     pathway_counts = p.loc[p["pass_filter"], "dev_pathway"].value_counts()

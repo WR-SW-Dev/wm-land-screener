@@ -115,7 +115,7 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
     parcels = add_future_landuse(parcels, flu_gdf, flu_lookup, flu_code_field)
 
     # ── 3. Score ──────────────────────────────────────────────────────────────
-    parcels = add_scores(parcels, zoning_table=zoning_table, city_key=city_key)
+    parcels = add_scores(parcels, zoning_table=zoning_table, city_key=city_key, min_acres=min_acres)
 
     # ── 4. Identify useful ID/address columns ─────────────────────────────────
     # Grand Haven city fields (after lowercasing): PARCELNUMB / PIN, ADDRESS / PROPSTREET, OWNERNAME

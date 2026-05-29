@@ -85,9 +85,17 @@ EGLE_WETLAND_SERVICE = (
 )
 
 # ── Parcel filtering thresholds ───────────────────────────────────────────────
-MIN_ACRES            = 4.0     # hard filter: below this is too small
+MIN_ACRES            = 2.0     # hard filter: below this is too small
 MAX_FLOOD_PCT        = 0.25    # hard filter: >25% floodplain = disqualify
 WETLAND_PENALTY_PCT  = 0.10    # soft: penalize wetland coverage above 10%
+
+# Owner name fragments to hard-filter (case-insensitive, partial match).
+# Add any owner names here that should never appear as qualified parcels —
+# golf courses, nature conservancies, utilities, etc.
+EXCLUDED_OWNER_PATTERNS = [
+    "PUBLIC SCHOOLS",    # public school sports fields, parking lots, etc.
+    "AMERICAN DUNES",    # American Dunes golf course (Grand Haven Township)
+]
 
 # Michigan assessor "property class" codes that represent vacant/developable land
 # https://www.michigan.gov/documents/treasury/L4023_Property_Classification_Codes_527469_7.pdf
@@ -274,7 +282,7 @@ CITIES = {
         "label":          "Grand Haven",
         "bbox":           (-86.275, 43.045, -86.195, 43.095),
         "county":         "ottawa",
-        "min_acres":      2.0,   # urban city — lower threshold; global default is MIN_ACRES (4.0)
+        "min_acres":      2.0,   # matches global MIN_ACRES
         # Data services
         "parcel_service": GH_PARCEL_SERVICE,      # wwplanning ArcGIS org (city-specific)
         "zoning_service": GH_ZONING_SERVICE,       # zZoning2020 layer — ZONE_ = short code

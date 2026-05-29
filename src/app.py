@@ -26,11 +26,183 @@ from scoring import SCORE_COMPONENTS                              # noqa: E402
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="WM Land Screener",
-    page_icon="🏗️",
+    page_title="WR-Dev Land Screener",
+    page_icon="🏠",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── WR-Dev brand CSS ───────────────────────────────────────────────────────────
+st.markdown("""
+<style>
+/* ── Fonts ── */
+html, body, [class*="css"], .stMarkdown, .stDataFrame,
+button, input, select, textarea {
+    font-family: Arial, sans-serif !important;
+}
+
+/* ── Brand colors ── */
+:root {
+    --wr-teal:      #779FA1;
+    --wr-gray:      #A1ABAC;
+    --wr-warm:      #C5C5B9;
+    --wr-dark:      #2c3e3f;
+    --wr-light-bg:  #f5f6f4;
+}
+
+/* ── Page background ── */
+.stApp { background-color: #ffffff; }
+
+/* ── Main title ── */
+h1 { color: var(--wr-dark) !important; font-family: Arial, sans-serif !important; }
+h2, h3 { color: var(--wr-teal) !important; font-family: Arial, sans-serif !important; }
+
+/* ── Sidebar ── */
+[data-testid="stSidebar"] {
+    background-color: var(--wr-light-bg) !important;
+    border-right: 1px solid var(--wr-warm);
+}
+[data-testid="stSidebar"] .stMarkdown p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] .stSelectbox label,
+[data-testid="stSidebar"] .stRadio label {
+    color: var(--wr-dark) !important;
+    font-family: Arial, sans-serif !important;
+}
+/* Sidebar section dividers */
+[data-testid="stSidebar"] hr { border-color: var(--wr-warm); }
+
+/* ── Radio button — remove label highlight ── */
+[data-testid="stRadio"] label {
+    background: transparent !important;
+}
+
+/* ── Tabs ── */
+.stTabs [data-baseweb="tab-list"] {
+    border-bottom: 2px solid var(--wr-warm);
+}
+.stTabs [data-baseweb="tab"] {
+    font-family: Arial, sans-serif !important;
+    color: var(--wr-gray) !important;
+    font-weight: 600;
+}
+.stTabs [aria-selected="true"] {
+    color: var(--wr-teal) !important;
+    border-bottom: 2px solid var(--wr-teal) !important;
+}
+
+/* ── Metric cards ── */
+[data-testid="stMetric"] {
+    background: var(--wr-light-bg);
+    border-left: 3px solid var(--wr-teal);
+    border-radius: 6px;
+    padding: 10px 14px !important;
+}
+[data-testid="stMetricValue"] {
+    color: var(--wr-dark) !important;
+    font-family: Arial, sans-serif !important;
+}
+[data-testid="stMetricLabel"] {
+    color: var(--wr-gray) !important;
+    font-family: Arial, sans-serif !important;
+    font-size: 12px !important;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+/* ── Expander headers ── */
+[data-testid="stExpander"] summary {
+    font-family: Arial, sans-serif !important;
+    font-weight: 600;
+    color: var(--wr-dark) !important;
+    border-left: 3px solid var(--wr-teal);
+    padding-left: 8px;
+}
+
+/* ── Buttons ── */
+.stButton button {
+    background-color: var(--wr-teal) !important;
+    color: white !important;
+    border: none !important;
+    font-family: Arial, sans-serif !important;
+    font-weight: 600;
+    border-radius: 6px !important;
+}
+.stButton button:hover {
+    background-color: #5a8a8c !important;
+}
+
+/* ── Download button ── */
+.stDownloadButton button {
+    background-color: white !important;
+    color: var(--wr-teal) !important;
+    border: 1.5px solid var(--wr-teal) !important;
+    font-family: Arial, sans-serif !important;
+    font-weight: 600;
+    border-radius: 6px !important;
+}
+
+/* ── Slider — replace pink with teal ── */
+[data-testid="stSlider"] [data-baseweb="slider"] [role="slider"] {
+    background-color: var(--wr-teal) !important;
+    border-color: var(--wr-teal) !important;
+}
+[data-testid="stSlider"] [data-baseweb="slider"] div[data-testid="stThumbValue"],
+[data-testid="stSlider"] [data-baseweb="slider"] [class*="Track"] > div:first-child {
+    background-color: var(--wr-teal) !important;
+}
+
+/* ── Radio buttons (SF / MF toggle) — replace pink with teal ── */
+[data-testid="stRadio"] [data-baseweb="radio"] [data-checked="true"] div,
+[data-testid="stRadio"] input[type="radio"]:checked + div {
+    background-color: var(--wr-teal) !important;
+    border-color: var(--wr-teal) !important;
+}
+[data-baseweb="radio"] [data-checked="true"] > div:first-child {
+    border-color: var(--wr-teal) !important;
+    background-color: var(--wr-teal) !important;
+}
+
+/* ── Selectbox / number input focus ring — replace pink with teal ── */
+[data-baseweb="select"] [aria-selected="true"],
+[data-baseweb="select"]:focus-within [data-baseweb="select-control"],
+input:focus, select:focus, textarea:focus {
+    border-color: var(--wr-teal) !important;
+    box-shadow: 0 0 0 1px var(--wr-teal) !important;
+}
+
+/* ── Checkbox — replace pink with teal ── */
+[data-baseweb="checkbox"] [data-checked="true"] div {
+    background-color: var(--wr-teal) !important;
+    border-color: var(--wr-teal) !important;
+}
+
+/* ── Progress / number display on slider — replace pink ── */
+[data-testid="stSliderThumbValue"] { color: var(--wr-teal) !important; }
+[class*="sliderThumb"] { background-color: var(--wr-teal) !important; }
+
+/* ── Any remaining Streamlit primary pink overrides ── */
+a, a:visited { color: var(--wr-teal) !important; }
+[class*="primary"] { color: var(--wr-teal) !important; }
+
+/* ── Divider ── */
+hr { border-color: var(--wr-warm) !important; }
+
+/* ── Body text — ensure readable dark color, not light gray ── */
+p, li, td, th, label, .stMarkdown {
+    color: var(--wr-dark) !important;
+}
+
+/* ── Caption / footer text ── */
+.stCaption, [data-testid="stCaptionContainer"] {
+    color: #5a6a6b !important;
+    font-family: Arial, sans-serif !important;
+}
+
+/* ── Hide running-person spinner ── */
+[data-testid="stStatusWidget"] { display: none !important; }
+</style>
+""", unsafe_allow_html=True)
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 _CRED_FILE = ROOT / "credentials.yaml"
@@ -72,7 +244,7 @@ SCORE_MED    = 50
 COLOR_HIGH   = "#22c55e"   # green
 COLOR_MED    = "#f59e0b"   # amber
 COLOR_LOW    = "#ef4444"   # red
-COLOR_STROKE = "#1e293b"   # dark border
+COLOR_STROKE = "#2c3e3f"   # WR-Dev dark
 
 # Parcel tracker
 TRACKER_FILE   = ROOT / "data" / "tracker.json"
@@ -188,7 +360,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
     # ── Base tile layers (toggled via top-right control) ──────────────────────
     folium.TileLayer(
         tiles="CartoDB positron",
-        name="🗺️ Street Map",
+        name="Street Map",
         control=True,
         show=True,
     ).add_to(m)
@@ -201,7 +373,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             "Esri, DigitalGlobe, GeoEye, Earthstar Geographics, "
             "CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, GIS User Community"
         ),
-        name="🛰️ Satellite",
+        name="Satellite",
         overlay=False,
         control=True,
         show=False,
@@ -209,7 +381,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
 
     # ── Wetland overlay (off by default — toggle in layer control) ───────────────
     if wetlands_gdf is not None and not wetlands_gdf.empty:
-        wetland_group = folium.FeatureGroup(name="💧 Wetlands", show=False)
+        wetland_group = folium.FeatureGroup(name="Wetlands", show=False)
         folium.GeoJson(
             wetlands_gdf.to_crs("EPSG:4326").__geo_interface__,
             style_function=lambda _x: {
@@ -240,7 +412,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
                        .index]
 
     # Group all parcel polygons into one toggleable layer
-    parcel_group = folium.FeatureGroup(name="📍 Parcels", show=True)
+    parcel_group = folium.FeatureGroup(name="Parcels", show=True)
 
     for _, row in gdf.iterrows():
         if row.geometry is None or row.geometry.is_empty:
@@ -320,10 +492,10 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             rezone_pct = min(int(pts_rezoning_earned / 10 * 100), 100)
             score_bars += f"""
     <tr>
-      <td style="color:#888;white-space:nowrap;padding-right:6px;">Rezoning bonus ✨</td>
+      <td style="color:#888;white-space:nowrap;padding-right:6px;">Rezoning bonus</td>
       <td style="width:100%;">
         <div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;">
-          <div style="background:#a78bfa;border-radius:3px;height:8px;width:{rezone_pct}%;"></div>
+          <div style="background:#779FA1;border-radius:3px;height:8px;width:{rezone_pct}%;"></div>
         </div>
       </td>
       <td style="color:#333;padding-left:6px;white-space:nowrap;">+{pts_rezoning_earned:.0f}</td>
@@ -354,7 +526,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         ) if _assessor_flag else ""
 
         popup_html = f"""
-<div style="font-family:sans-serif;min-width:270px;font-size:13px;">
+<div style="font-family:Arial,sans-serif;min-width:270px;font-size:13px;">
   {review_banner}
   <b style="font-size:15px;">{addr}</b><br>
   <span style="color:#555;">{owner}</span>
@@ -423,7 +595,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.title("🏗️ WM Land Screener")
+    st.title("WM Land Screener")
     st.caption("West Michigan Vacant Land Feasibility Tool — Phase 1")
 
     # User info + logout
@@ -441,10 +613,10 @@ with st.sidebar:
     city_min  = city_cfg.get("min_acres", MIN_ACRES)
 
     st.divider()
-    dev_type = st.radio(
+    dev_type = st.segmented_control(
         "Development type",
         ["Single-Family", "Multifamily"],
-        horizontal=True,
+        default="Single-Family",
         help=(
             "**Single-Family** — densities based on SF minimum lot standards. "
             "Full score credit at 7 u/ac.\n\n"
@@ -493,26 +665,6 @@ with st.sidebar:
     # Parcel tracker status filter
     status_placeholder = st.empty()
 
-    st.divider()
-    st.subheader("🔮 Master plan data")
-    flu_file = (
-        Path(__file__).parent.parent / "data" / "raw"
-        / f"{city_key}_future_lu.geojson"
-    )
-    flu_svc = city_cfg.get("flu_service")
-    if flu_file.exists():
-        st.success("Future Land Use layer loaded ✓", icon="✅")
-    elif flu_svc:
-        st.info("FLU service configured — will download on next run.", icon="🌐")
-    else:
-        st.warning(
-            f"No Future Land Use data loaded for **{city_cfg['label']}**.\n\n"
-            "To enable rezoning scoring, set `flu_service` in "
-            f"`CITIES['{city_key}']` in `config.py`, or place a GeoJSON at "
-            f"`data/raw/{city_key}_future_lu.geojson`.",
-            icon="📋",
-        )
-
     # Parcel service status — highlight when not configured
     parcel_svc = city_cfg.get("parcel_service")
     parcel_cache = (
@@ -554,7 +706,10 @@ df_all, gdf_qual = load_data(city_key)
 tracker = load_tracker()
 
 # ── Main content ──────────────────────────────────────────────────────────────
-st.title(f"🏗️ {city_cfg['label']} — Vacant Land Screener")
+_logo_path = ROOT / "assets" / "wr_dev_logo.png"
+if _logo_path.exists():
+    st.logo(str(_logo_path), size="large")
+st.title(f"{city_cfg['label']} — Vacant Land Screener")
 
 if df_all is None:
     st.warning(
@@ -674,7 +829,7 @@ else:
     gdf_shown = gdf_qual  # fall back to all if no parcel_id
 
 # ── Page tabs ─────────────────────────────────────────────────────────────────
-tab1, tab2 = st.tabs(["🗺️  Screened Parcels", "📋  Manual Listings"])
+tab1, tab2 = st.tabs(["Screened Parcels", "Manual Listings"])
 
 with tab1:
 
@@ -713,7 +868,7 @@ with tab1:
     st_folium(m, use_container_width=True, height=530, returned_objects=[])
 
     # ── Qualifying parcels table ──────────────────────────────────────────────────
-    with st.expander(f"📋 Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):
+    with st.expander(f"Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):
         display_cols = [
             "parcel_id", "address", "owner",
             "calc_acres", "net_dev_acres",
@@ -824,7 +979,7 @@ with tab1:
 
     # ── Tracker summary ───────────────────────────────────────────────────────────
     if tracker:
-        with st.expander("📊 Parcel tracker summary", expanded=False):
+        with st.expander("Parcel tracker summary", expanded=False):
             st.caption("Counts across all parcels ever tracked (not filtered by current display).")
             counts = {s: 0 for s in STATUS_OPTIONS}
             for v in tracker.values():
@@ -847,7 +1002,7 @@ with tab1:
     # ── Per-parcel score breakdown ────────────────────────────────────────────────
     comp_keys = [c["key"] for c in SCORE_COMPONENTS]
     if not qual_filtered.empty and all(k in qual_filtered.columns for k in comp_keys):
-        with st.expander("🔢 Score breakdown — per parcel", expanded=True):
+        with st.expander("Score breakdown — per parcel", expanded=True):
             st.caption(
                 "Shows how each component contributed to a parcel's total score. "
                 "Bar = % of that component's maximum earned."
@@ -867,7 +1022,7 @@ with tab1:
                     rezone_badge = (
                         f" &nbsp;<span style='background:{COLOR_HIGH};color:#fff;"
                         f"font-size:11px;font-weight:700;padding:2px 7px;"
-                        f"border-radius:10px;'>🔮 REZONING +{rezone_d} u/ac → {flu_label}</span>"
+                        f"border-radius:10px;'>REZONING +{rezone_d} u/ac → {flu_label}</span>"
                     )
                 elif flu_label:
                     rezone_badge = (
@@ -910,7 +1065,7 @@ with tab1:
         rezone_parcels = qual_filtered[qual_filtered["rezoning_upside"] == True].copy()
         if not rezone_parcels.empty:
             with st.expander(
-                f"🔮 Rezoning watch list  ({len(rezone_parcels)} parcels with upside)",
+                f"Rezoning watch list  ({len(rezone_parcels)} parcels with upside)",
                 expanded=True,
             ):
                 st.caption(
@@ -936,7 +1091,7 @@ with tab1:
     # ── Development pathway breakdown ─────────────────────────────────────────────
     if "dev_pathway" in qual_filtered.columns:
         with st.expander(
-            "🛣️ Development pathway breakdown  (how each parcel reaches 3+ u/ac)",
+            "Development pathway breakdown  (how each parcel reaches 3+ u/ac)",
             expanded=True,
         ):
             st.caption(
@@ -1031,7 +1186,7 @@ with tab1:
                     )
 
     # ── Scoring methodology ────────────────────────────────────────────────────────
-    with st.expander("📐 How scores are calculated"):
+    with st.expander("How scores are calculated"):
         _mode_label = "Multifamily" if USE_MF else "Single-Family"
         st.markdown(
             f"Each qualifying parcel is scored **0–100** across five components "
@@ -1065,7 +1220,7 @@ with tab1:
         )
 
     # ── Filter breakdown ──────────────────────────────────────────────────────────
-    with st.expander("📊 Why parcels were eliminated"):
+    with st.expander("Why parcels were eliminated"):
         reason_counts = df_all["filter_reason"].value_counts().reset_index()
         reason_counts.columns = ["Reason", "Count"]
         reason_counts["% of total"] = (
@@ -1087,71 +1242,63 @@ with tab1:
 
 # ── Manual Listings tab ───────────────────────────────────────────────────────
 with tab2:
-    _ML_FILE = ROOT / "Manual Add Land Listings.xlsx"
+    _ML_FILE = ROOT / "Potential Land New Process for AI Tool.xlsx"
 
     @st.cache_data(ttl=300)
     def load_manual_listings(path: str):
         """Read CARWM and Facebook listings from Excel, preserving hyperlinks."""
         import openpyxl as _oxl
-        wb = _oxl.load_workbook(path)
-        ws = wb.active
-
-        link_by_row = {}
-        for row in ws.iter_rows():
-            for cell in row:
-                if cell.hyperlink:
-                    link_by_row[cell.row] = cell.hyperlink.target
-
-        df = pd.read_excel(path, header=2)
-        df.columns = [
-            "Address", "Parcel_ID", "List_Price", "City", "County", "Zoning",
-            "Allowable_Density", "Master_Plan", "Master_Plan_Density", "Lot_Acres",
-            "List_Price_per_Acre", "Road_Frontage", "Utilities_Available",
-            "EGLE_Wetland", "Min_Lot_Area", "Max_Lot_Coverage", "Min_Unit_Size",
+        # ── CARWM sheet ───────────────────────────────────────────────────────
+        carwm = pd.read_excel(path, sheet_name="CARWM", header=3)
+        carwm.columns = [
+            "Address", "Listing_Date", "Days_on_Market", "List_Price",
+            "City", "County", "Zoning", "Allowable_Density",
+            "Master_Plan", "Master_Plan_Density", "Lot_Acres", "List_Price_per_Acre",
+            "Road_Frontage", "Utilities_Available", "EGLE_Wetland",
+            "Min_Lot_Area", "Max_Lot_Coverage", "Min_Unit_Size",
             "Min_Ground_Floor", "Notes",
         ]
-        df = df.iloc[1:].reset_index(drop=True)
-        df["_excel_row"] = df.index + 5
-        df["Listing_URL"] = df["_excel_row"].map(link_by_row).fillna("")
+        carwm = carwm[carwm["Address"].notna() & (carwm["Address"].astype(str).str.strip() != "")].reset_index(drop=True)
+        carwm["List_Price"] = pd.to_numeric(carwm["List_Price"], errors="coerce")
+        carwm["Lot_Acres"]  = pd.to_numeric(carwm["Lot_Acres"],  errors="coerce")
+        carwm["Notes"]      = carwm["Notes"].astype(str).str.replace("\n", " ").replace("nan", "")
+        carwm["Utilities_Available"] = carwm["Utilities_Available"].astype(str).replace("nan", "")
 
-        df["Parcel_ID"]  = df["Parcel_ID"].astype(str).str.strip().replace("nan", "")
-        df["Notes"]      = df["Notes"].astype(str).str.replace("\n", " ").replace("nan", "")
-        df["Utilities_Available"] = df["Utilities_Available"].astype(str).replace("nan", "")
-        df["List_Price"] = pd.to_numeric(df["List_Price"], errors="coerce")
-        df["Lot_Acres"]  = pd.to_numeric(df["Lot_Acres"],  errors="coerce")
+        # ── FB Marketplace sheet ──────────────────────────────────────────────
+        facebook = pd.read_excel(path, sheet_name="FB Marketplace", header=4)
+        facebook.columns = [
+            "ID", "Listing_URL", "City", "County", "Lot_Acres", "List_Price",
+            "Price_per_Acre", "Zoning", "Master_Plan", "Utilities_Available",
+            "Wetlands", "Allowable_Density", "Min_Lot_Area", "Max_Lot_Coverage",
+            "Min_Unit_Size", "Min_Ground_Floor", "Notes",
+        ]
+        facebook = facebook[facebook["ID"].notna() & (facebook["ID"].astype(str).str.strip() != "")].reset_index(drop=True)
+        facebook["List_Price"] = pd.to_numeric(facebook["List_Price"], errors="coerce")
+        facebook["Lot_Acres"]  = pd.to_numeric(facebook["Lot_Acres"],  errors="coerce")
+        facebook["Notes"]      = facebook["Notes"].astype(str).str.replace("\n", " ").replace("nan", "")
+        facebook["Listing_URL"] = facebook["Listing_URL"].astype(str).replace("nan", "")
 
-        carwm    = df[~df["Address"].astype(str).str.startswith("Facebook")].copy()
-        facebook = df[df["Address"].astype(str).str.startswith("Facebook")].copy()
         return carwm, facebook
 
     if not _ML_FILE.exists():
         st.warning(
-            "Manual listings file not found. Place **Manual Add Land Listings.xlsx** "
+            "Manual listings file not found. Place **Potential Land New Process for AI Tool.xlsx** "
             "in the project root folder.",
-            icon="📋",
+            
         )
     else:
         ml_carwm, ml_facebook = load_manual_listings(str(_ML_FILE))
 
-        st.caption(
-            f"Reading from **Manual Add Land Listings.xlsx** · "
-            f"{len(ml_carwm)} CARWM listings · {len(ml_facebook)} Facebook Marketplace listings"
-        )
+        st.caption(f"Reading from **Potential Land New Process for AI Tool.xlsx** · {len(ml_carwm)} CARWM listings · {len(ml_facebook)} Facebook Marketplace listings")
 
-        # ── CARWM listings ────────────────────────────────────────────────────────
-        st.subheader(f"🏢 CARWM Listings  ({len(ml_carwm)})")
-        st.caption(
-            "Listed parcels sourced from Commercial Alliance of REALTORS® West Michigan. "
-            "Parcel IDs are matched against our scored database where possible."
-        )
+        # ── Listings table ────────────────────────────────────────────────────────
+        st.subheader(f"Listings  ({len(ml_carwm)})")
 
-        _has_db = df_all is not None and "parcel_id" in df_all.columns
         carwm_display = ml_carwm[[
-            "Address", "Parcel_ID", "City", "County", "Lot_Acres",
+            "Address", "City", "County", "Lot_Acres",
             "List_Price", "Zoning", "Utilities_Available", "Notes",
         ]].copy()
         carwm_display = carwm_display.rename(columns={
-            "Parcel_ID":           "Parcel ID",
             "Lot_Acres":           "Acres",
             "List_Price":          "List Price ($)",
             "Utilities_Available": "Utilities",
@@ -1163,49 +1310,96 @@ with tab2:
             lambda x: f"{x:.2f}" if pd.notna(x) else ""
         )
 
-        if _has_db:
-            _db_join = df_all[["parcel_id", "score"]].copy()
-            _db_join = _db_join.rename(columns={"parcel_id": "Parcel ID"})
-            carwm_display = carwm_display.merge(_db_join, on="Parcel ID", how="left")
-            carwm_display["score"] = carwm_display["score"].apply(
-                lambda x: f"{x:.1f}" if pd.notna(x) else "—"
-            )
-            carwm_display = carwm_display.rename(columns={"score": "Score"})
+        # Add tracker columns — key off "CARWM_{address}"
+        carwm_display["_tracker_key"] = ml_carwm["Address"].astype(str).apply(lambda a: f"CARWM_{a}")
+        carwm_display["Status"]     = carwm_display["_tracker_key"].map(lambda k: tracker.get(k, {}).get("status", "Not contacted"))
+        carwm_display["Notes"]      = carwm_display["_tracker_key"].map(lambda k: tracker.get(k, {}).get("notes", ""))
+        carwm_display["Reviewed ✓"] = carwm_display["_tracker_key"].map(lambda k: bool(tracker.get(k, {}).get("reviewed", False)))
+        _carwm_keys = carwm_display.pop("_tracker_key")
+        _carwm_disabled = [c for c in carwm_display.columns if c not in {"Status", "Notes", "Reviewed ✓"}]
 
-        st.dataframe(carwm_display, hide_index=True, use_container_width=True)
+        carwm_edited = st.data_editor(
+            carwm_display, hide_index=True, use_container_width=True,
+            key="tracker_carwm",
+            disabled=_carwm_disabled,
+            column_config={
+                "Status":     st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS, required=True),
+                "Notes":      st.column_config.TextColumn("Notes", width="large"),
+                "Reviewed ✓": st.column_config.CheckboxColumn("Reviewed ✓", default=False),
+            },
+        )
+        # Save CARWM tracker changes
+        _carwm_updates = {}
+        for i, erow in carwm_edited.iterrows():
+            k = _carwm_keys.iloc[i]
+            status = erow.get("Status", "Not contacted")
+            notes  = erow.get("Notes", "") or ""
+            reviewed = bool(erow.get("Reviewed ✓", False))
+            old = tracker.get(k, {})
+            if old.get("status", "Not contacted") != status or old.get("notes", "") != notes or bool(old.get("reviewed", False)) != reviewed:
+                _carwm_updates[k] = {"status": status, "notes": notes, "reviewed": reviewed,
+                                      "updated": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                                      "updated_by": _username}
+        if _carwm_updates:
+            save_tracker(_carwm_updates)
+            tracker.update(_carwm_updates)
 
         # ── Facebook Marketplace listings ──────────────────────────────────────────
-        st.divider()
-        st.subheader(f"📱 Facebook Marketplace Listings  ({len(ml_facebook)})")
-        st.caption(
-            "Sourced from Facebook Marketplace. Locations are approximate — "
-            "parcel ID matching not available. Click the listing link to view the original post."
-        )
-
-        fb_display = ml_facebook[[
-            "Address", "City", "County", "Lot_Acres", "List_Price", "Notes", "Listing_URL",
-        ]].copy()
-        fb_display = fb_display.rename(columns={
-            "Lot_Acres":  "Acres",
-            "List_Price": "List Price ($)",
-        })
-        fb_display["List Price ($)"] = fb_display["List Price ($)"].apply(
-            lambda x: f"${x:,.0f}" if pd.notna(x) else ""
-        )
-        fb_display["Acres"] = fb_display["Acres"].apply(
-            lambda x: f"{x:.2f}" if pd.notna(x) else ""
-        )
-        fb_display["Listing"] = fb_display["Listing_URL"].apply(
-            lambda u: f'<a href="{u}" target="_blank">View ↗</a>' if u else ""
-        )
-        fb_display = fb_display.drop(columns=["Listing_URL", "Address"])
-
-        _center_cols = {"Acres", "Listing"}
-        _html = fb_display.to_html(escape=False, index=False)
-        for col in fb_display.columns:
-            align = "center" if col in _center_cols else "left"
-            _html = _html.replace(
-                f"<th>{col}</th>",
-                f"<th style='text-align:{align};'>{col}</th>",
+        if not ml_facebook.empty:
+            st.divider()
+            st.subheader(f"Facebook Marketplace Listings  ({len(ml_facebook)})")
+            st.caption(
+                "Sourced from Facebook Marketplace. Locations are approximate — "
+                "click the listing link to view the original post."
             )
-        st.write(_html, unsafe_allow_html=True)
+
+            fb_display = ml_facebook[[
+                "City", "County", "Lot_Acres", "List_Price", "Notes", "Listing_URL",
+            ]].copy()
+            fb_display = fb_display.rename(columns={
+                "Lot_Acres":  "Acres",
+                "List_Price": "List Price ($)",
+            })
+            fb_display["List Price ($)"] = fb_display["List Price ($)"].apply(
+                lambda x: f"${x:,.0f}" if pd.notna(x) else ""
+            )
+            fb_display["Acres"] = fb_display["Acres"].apply(
+                lambda x: f"{x:.2f}" if pd.notna(x) else ""
+            )
+            fb_display["Listing"] = fb_display["Listing_URL"]
+            fb_display = fb_display.drop(columns=["Listing_URL"])
+
+            # Add tracker columns — key off "FB_{id}"
+            fb_display["_tracker_key"] = ml_facebook["ID"].astype(str).apply(lambda i: f"FB_{i}")
+            fb_display["Status"]     = fb_display["_tracker_key"].map(lambda k: tracker.get(k, {}).get("status", "Not contacted"))
+            fb_display["Notes"]      = fb_display["_tracker_key"].map(lambda k: tracker.get(k, {}).get("notes", ""))
+            fb_display["Reviewed ✓"] = fb_display["_tracker_key"].map(lambda k: bool(tracker.get(k, {}).get("reviewed", False)))
+            _fb_keys = fb_display.pop("_tracker_key")
+            _fb_disabled = [c for c in fb_display.columns if c not in {"Status", "Notes", "Reviewed ✓"}]
+
+            fb_edited = st.data_editor(
+                fb_display, hide_index=True, use_container_width=True,
+                key="tracker_fb",
+                disabled=_fb_disabled,
+                column_config={
+                    "Listing":    st.column_config.LinkColumn("Listing", display_text="View ↗"),
+                    "Status":     st.column_config.SelectboxColumn("Status", options=STATUS_OPTIONS, required=True),
+                    "Notes":      st.column_config.TextColumn("Notes", width="large"),
+                    "Reviewed ✓": st.column_config.CheckboxColumn("Reviewed ✓", default=False),
+                },
+            )
+            # Save FB tracker changes
+            _fb_updates = {}
+            for i, erow in fb_edited.iterrows():
+                k = _fb_keys.iloc[i]
+                status = erow.get("Status", "Not contacted")
+                notes  = erow.get("Notes", "") or ""
+                reviewed = bool(erow.get("Reviewed ✓", False))
+                old = tracker.get(k, {})
+                if old.get("status", "Not contacted") != status or old.get("notes", "") != notes or bool(old.get("reviewed", False)) != reviewed:
+                    _fb_updates[k] = {"status": status, "notes": notes, "reviewed": reviewed,
+                                       "updated": datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                                       "updated_by": _username}
+            if _fb_updates:
+                save_tracker(_fb_updates)
+                tracker.update(_fb_updates)

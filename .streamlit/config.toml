@@ -1,0 +1,6 @@
+[theme]
+primaryColor       = "#779FA1"   # WR-Dev teal — replaces default Streamlit pink
+backgroundColor    = "#ffffff"
+secondaryBackgroundColor = "#f5f6f4"
+textColor          = "#2c3e3f"
+font               = "sans serif"

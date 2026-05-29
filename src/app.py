@@ -229,6 +229,16 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
 
     gdf = gdf.to_crs("EPSG:4326")
 
+    # Deduplicate by geometry — condo/PUD developments often map many parcel
+    # records to the exact same polygon. Stacking 40+ layers at 0.35 opacity
+    # each produces an effectively opaque result. Keep the highest-scoring row
+    # per unique geometry so only one polygon is drawn per footprint.
+    geom_wkt = gdf.geometry.apply(lambda g: g.wkt)
+    gdf = gdf.loc[gdf.assign(_geom_wkt=geom_wkt)
+                       .sort_values("score", ascending=False)
+                       .drop_duplicates("_geom_wkt")
+                       .index]
+
     # Group all parcel polygons into one toggleable layer
     parcel_group = folium.FeatureGroup(name="📍 Parcels", show=True)
 
@@ -282,12 +292,17 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             if pathway else ""
         )
 
-        # Build score bar rows for each component
+        # Build score bar rows — base components first, rezoning bonus separately
         score_bars = ""
+        pts_rezoning_earned = 0.0
         for comp in SCORE_COMPONENTS:
             pts     = min(float(row.get(comp["key"], 0) or 0), comp["max"])
             max_pts = comp["max"]
-            pct     = min(int(pts / max_pts * 100), 100) if max_pts else 0
+            is_bonus = comp.get("bonus", False)
+            if is_bonus:
+                pts_rezoning_earned = pts
+                continue   # rendered separately below
+            pct       = min(int(pts / max_pts * 100), 100) if max_pts else 0
             bar_color = COLOR_HIGH if pct >= 80 else (COLOR_MED if pct >= 40 else COLOR_LOW)
             score_bars += f"""
     <tr>
@@ -298,6 +313,20 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         </div>
       </td>
       <td style="color:#333;padding-left:6px;white-space:nowrap;">{pts:.0f}/{max_pts}</td>
+    </tr>"""
+
+        # Rezoning bonus row — only shown when there's actual upside
+        if pts_rezoning_earned > 0:
+            rezone_pct = min(int(pts_rezoning_earned / 10 * 100), 100)
+            score_bars += f"""
+    <tr>
+      <td style="color:#888;white-space:nowrap;padding-right:6px;">Rezoning bonus ✨</td>
+      <td style="width:100%;">
+        <div style="background:#e5e7eb;border-radius:3px;height:8px;width:100%;">
+          <div style="background:#a78bfa;border-radius:3px;height:8px;width:{rezone_pct}%;"></div>
+        </div>
+      </td>
+      <td style="color:#333;padding-left:6px;white-space:nowrap;">+{pts_rezoning_earned:.0f}</td>
     </tr>"""
 
         # FLU row — only shown when data is available
@@ -314,8 +343,19 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         else:
             flu_row = ""
 
+        # Review flag banner — only shown for assessor-improved flag, not zoning flags
+        _review_reasons = str(row.get("review_reasons", "") or "")
+        _assessor_flag  = "Assessor says improved" in _review_reasons
+        review_banner = (
+            f"<div style='background:#fef3c7;border-left:3px solid #f59e0b;"
+            f"padding:5px 8px;margin-bottom:6px;border-radius:3px;"
+            f"font-size:11px;color:#92400e;'>"
+            f"⚠️ <b>Needs Review:</b> Assessor classifies as improved but no building detected — confirm vacant or parking/storage only</div>"
+        ) if _assessor_flag else ""
+
         popup_html = f"""
 <div style="font-family:sans-serif;min-width:270px;font-size:13px;">
+  {review_banner}
   <b style="font-size:15px;">{addr}</b><br>
   <span style="color:#555;">{owner}</span>
   <div style="margin-top:5px;">{status_badge}</div>
@@ -351,7 +391,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
   </table>
   <hr style="margin:6px 0;">
   <div style="font-weight:600;margin-bottom:4px;">
-    Score: <span style="color:{color};">{score:.1f} / 100</span>
+    Score: <span style="color:{color};">{score:.1f}</span>
+    {f"<span style='font-weight:400;color:#888;font-size:11px;'> (base {score - pts_rezoning_earned:.0f} + {pts_rezoning_earned:.0f} rezoning bonus)</span>" if pts_rezoning_earned > 0 else "<span style='color:#888;font-size:11px;font-weight:400;'> / 100</span>"}
   </div>
   <table style="width:100%;border-collapse:collapse;line-height:2;">
     {score_bars}
@@ -364,11 +405,11 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
                 "fillColor":   c,
                 "color":       COLOR_STROKE,
                 "weight":      1.5,
-                "fillOpacity": 0.55,
+                "fillOpacity": 0.35,
             },
             highlight_function=lambda _x: {
                 "weight":      3,
-                "fillOpacity": 0.8,
+                "fillOpacity": 0.55,
             },
             popup=folium.Popup(popup_html, max_width=290),
             tooltip=f"{addr}  |  Score {score:.0f}  |  {u_con}–{u_opt} units",
@@ -643,11 +684,11 @@ with tab1:
 
     # ── Legend ────────────────────────────────────────────────────────────────────
     leg1, leg2, leg3, _rest = st.columns([1, 1, 1, 5])
-    leg1.markdown(f"<span style='color:{COLOR_HIGH}'>⬛</span> Score ≥ {SCORE_HIGH}",
+    leg1.markdown(f"<span style='display:inline-block;width:14px;height:14px;background:{COLOR_HIGH};border-radius:2px;vertical-align:middle;margin-right:4px;'></span> Score ≥ {SCORE_HIGH}",
                   unsafe_allow_html=True)
-    leg2.markdown(f"<span style='color:{COLOR_MED}'>⬛</span> Score {SCORE_MED}–{SCORE_HIGH-1}",
+    leg2.markdown(f"<span style='display:inline-block;width:14px;height:14px;background:{COLOR_MED};border-radius:2px;vertical-align:middle;margin-right:4px;'></span> Score {SCORE_MED}–{SCORE_HIGH-1}",
                   unsafe_allow_html=True)
-    leg3.markdown(f"<span style='color:{COLOR_LOW}'>⬛</span> Score < {SCORE_MED}",
+    leg3.markdown(f"<span style='display:inline-block;width:14px;height:14px;background:{COLOR_LOW};border-radius:2px;vertical-align:middle;margin-right:4px;'></span> Score < {SCORE_MED}",
                   unsafe_allow_html=True)
 
     # ── Merge MF-recomputed values into gdf_shown so popup reflects active mode ───

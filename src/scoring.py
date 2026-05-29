@@ -200,7 +200,7 @@ def score_components(row: pd.Series) -> dict:
     max_density = row.get("max_units_per_acre", 0)
     pts_density = round(min(max_density / 7, 1.0) * 40, 1)
 
-    # 2. Rezoning potential (0-20 pts) — only when FLU data is present
+    # 2. Rezoning potential (0-10 pts bonus) — only when FLU data is present
     flu_code       = str(row.get("future_lu_code", "")).strip()
     rezoning_delta = float(row.get("rezoning_delta", 0) or 0)
     if flu_code and rezoning_delta > 0:
@@ -367,7 +367,14 @@ def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
         for col in breakdown.columns:
             p[col] = 0.0
             p.loc[mask, col] = breakdown[col]
-        p.loc[mask, "score"] = breakdown.sum(axis=1).clip(upper=100).round(1)
+        # Base score: 4 components normalised to 0-100 (max = _BASE_MAX = 100)
+        base_raw = (
+            breakdown["pts_density"] + breakdown["pts_wetland"]
+            + breakdown["pts_flood"] + breakdown["pts_shape"]
+        )
+        base_score = (base_raw / _BASE_MAX * 100).round(1)
+        # Rezoning is a bonus — can push score above 100, never penalises
+        p.loc[mask, "score"] = (base_score + breakdown["pts_rezoning"]).round(1)
     else:
         for comp in SCORE_COMPONENTS:
             p[comp["key"]] = 0.0

@@ -612,7 +612,7 @@ if USE_MF:
         if _exempt_col else pd.Series(False, index=df_all.index)
     )
     _flood_mask   = df_all["flood_pct"].fillna(0) > MAX_FLOOD_PCT
-    _bldg_mask    = df_all["building_pct"].fillna(0) > 0.01 if "building_pct" in df_all.columns \
+    _bldg_mask    = df_all["building_pct"].fillna(0) > 0.05 if "building_pct" in df_all.columns \
                     else pd.Series(False, index=df_all.index)
     _density_mask = df_all[MF_DENSITY_COL].fillna(0) < 3
 
@@ -622,9 +622,13 @@ if USE_MF:
     # Recompute density score and total score using MF density + MF ceiling (30 u/ac)
     qual_all["max_units_per_acre"] = qual_all[MF_DENSITY_COL]
     qual_all["pts_density"] = (qual_all[MF_DENSITY_COL] / 30).clip(upper=1.0).mul(40).round(1)
-    score_cols = ["pts_density", "pts_rezoning", "pts_wetland", "pts_flood", "pts_shape"]
-    existing   = [c for c in score_cols if c in qual_all.columns]
-    qual_all["score"] = qual_all[existing].fillna(0).sum(axis=1).clip(upper=100).round(1)
+    # Base score (4 components, max 100) + rezoning bonus on top (no clip at 100)
+    base_cols = ["pts_density", "pts_wetland", "pts_flood", "pts_shape"]
+    existing_base = [c for c in base_cols if c in qual_all.columns]
+    base_score = qual_all[existing_base].fillna(0).sum(axis=1).round(1)
+    rezone_bonus = qual_all["pts_rezoning"].fillna(0) if "pts_rezoning" in qual_all.columns \
+                   else pd.Series(0, index=qual_all.index)
+    qual_all["score"] = (base_score + rezone_bonus).round(1)
 
     # Recompute unit estimates using MF density
     net = qual_all["net_dev_acres"] if "net_dev_acres" in qual_all.columns \

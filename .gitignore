@@ -28,7 +28,10 @@ data/tracker.json
 *.env
 secrets.json
 credentials.json
-credentials.yaml        # user logins — NEVER commit this
+# user logins — NEVER commit this
+credentials.yaml
+# SSH key pairs — NEVER commit this
+*.pem
 
 # ── Claude Code local settings ────────────────────────────────────────────────
 .claude/settings.local.json

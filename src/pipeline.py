@@ -23,7 +23,7 @@ from config import (
 )
 from data_loader import (
     load_parcels, load_zoning, load_flood_zones, load_wetlands,
-    load_buildings, load_future_landuse, load_soils,
+    load_buildings, load_future_landuse, load_soils, load_drains,
 )
 from overlay import (
     add_parcel_area, add_zoning, add_flood_coverage, add_wetland_coverage,
@@ -88,6 +88,11 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
 
     print("\n[4/7] Loading wetlands...")
     wetlands = load_wetlands(bbox, city_key, force_download)
+
+    # County drains (Ottawa County only) — cached for the map overlay; not scored.
+    if city_cfg.get("county") == "ottawa":
+        print("  Loading Ottawa County drains (map overlay only)...")
+        load_drains(bbox, city_key, force_download)
 
     print("\n[5/7] Loading building footprints...")
     buildings = load_buildings(bbox, city_key, force_download)

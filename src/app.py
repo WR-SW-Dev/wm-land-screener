@@ -21,7 +21,8 @@ from streamlit_folium import st_folium
 # ── Path setup ────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
-from config import CITIES, OUTPUT_DIR, MIN_ACRES, MAX_FLOOD_PCT  # noqa: E402
+from config import (CITIES, OUTPUT_DIR, MIN_ACRES, MAX_FLOOD_PCT,  # noqa: E402
+                    DRAIN_MAINTYPE_COLORS, DRAIN_DEFAULT_COLOR)
 from scoring import SCORE_COMPONENTS                              # noqa: E402
 
 # ── Brand CSS (owned here; injected by the shell) ────────────────────────────
@@ -280,6 +281,15 @@ def load_wetlands_overlay(city_key: str) -> gpd.GeoDataFrame:
     return gpd.read_file(path)
 
 
+@st.cache_data(ttl=300)
+def load_drains_overlay(city_key: str) -> gpd.GeoDataFrame:
+    """Load cached Ottawa County drain lines for the map overlay (Ottawa only)."""
+    path = ROOT / "data" / "raw" / f"{city_key}_drains.geojson"
+    if not path.exists():
+        return gpd.GeoDataFrame()
+    return gpd.read_file(path)
+
+
 def run_pipeline(city_key: str, force: bool = False):
     """Run the pipeline as a subprocess and stream output into the UI."""
     cmd = [sys.executable, str(ROOT / "src" / "pipeline.py"), "--city", city_key]
@@ -311,7 +321,8 @@ def run_pipeline(city_key: str, force: bool = False):
 def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
              mode_label: str = "Single-Family",
              wetlands_gdf: gpd.GeoDataFrame = None,
-             tracker: dict = None) -> folium.Map:
+             tracker: dict = None,
+             drains_gdf: gpd.GeoDataFrame = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     tracker = tracker or {}
     min_lon, min_lat, max_lon, max_lat = bbox
@@ -355,6 +366,52 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             tooltip="Wetland",
         ).add_to(wetland_group)
         wetland_group.add_to(m)
+
+    # ── County drains overlay (off by default — toggle in layer control) ─────────
+    if drains_gdf is not None and not drains_gdf.empty:
+        drains_4326 = drains_gdf.to_crs("EPSG:4326")
+
+        def _drain_style(feat):
+            mt = (feat["properties"].get("maintype") or "").strip()
+            return {
+                "color":   DRAIN_MAINTYPE_COLORS.get(mt, DRAIN_DEFAULT_COLOR),
+                "weight":  3,
+                "opacity": 0.85,
+            }
+
+        drain_group = folium.FeatureGroup(name="Drains (county)", show=False)
+        folium.GeoJson(
+            drains_4326.__geo_interface__,
+            style_function=_drain_style,
+            highlight_function=lambda _x: {"weight": 6, "opacity": 1.0},
+            tooltip=folium.GeoJsonTooltip(
+                fields=["maintype", "drainclassification", "ownedby", "dfacilityid"],
+                aliases=["Type:", "Drain Code:", "Owned by:", "Facility ID:"],
+                sticky=True,
+            ),
+        ).add_to(drain_group)
+        drain_group.add_to(m)
+
+        # On-map legend / key — only the MainTypes actually present, kept compact.
+        present = [mt for mt in DRAIN_MAINTYPE_COLORS
+                   if mt in set(drains_4326.get("maintype", []).dropna())]
+        if present:
+            rows = "".join(
+                f'<div style="margin:2px 0;"><span style="display:inline-block;'
+                f'width:14px;height:3px;background:{DRAIN_MAINTYPE_COLORS[mt]};'
+                f'vertical-align:middle;margin-right:6px;"></span>{mt}</div>'
+                for mt in present
+            )
+            legend_html = (
+                '<div style="position:fixed;bottom:24px;left:12px;z-index:9999;'
+                'background:rgba(255,255,255,0.92);border:1px solid #C5C5B9;'
+                'border-radius:6px;padding:8px 10px;font-family:Arial,sans-serif;'
+                'font-size:11px;color:#2c3e3f;box-shadow:0 1px 4px rgba(0,0,0,0.15);">'
+                '<div style="font-weight:600;margin-bottom:4px;">County Drains'
+                '<span style="font-weight:400;color:#888;"> (toggle "Drains")</span></div>'
+                f'{rows}</div>'
+            )
+            m.get_root().html.add_child(folium.Element(legend_html))
 
     if gdf is None or gdf.empty:
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
@@ -488,7 +545,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         ) if _assessor_flag else ""
 
         popup_html = f"""
-<div style="font-family:Arial,sans-serif;min-width:270px;font-size:13px;">
+<div style="font-family:Arial,sans-serif;min-width:270px;font-size:13px;max-height:440px;overflow-y:auto;overflow-x:hidden;padding-right:6px;">
   {review_banner}
   <b style="font-size:15px;">{addr}</b><br>
   <span style="color:#555;">{owner}</span>
@@ -833,9 +890,11 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         # ── Map ───────────────────────────────────────────────────────────────────────
         _mode_label_map = "Multifamily" if USE_MF else "Single-Family"
         _wetlands_overlay = load_wetlands_overlay(city_key)
+        _drains_overlay = load_drains_overlay(city_key)
         m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
-                     wetlands_gdf=_wetlands_overlay, tracker=tracker)
-        st_folium(m, use_container_width=True, height=530, returned_objects=[])
+                     wetlands_gdf=_wetlands_overlay, tracker=tracker,
+                     drains_gdf=_drains_overlay)
+        st_folium(m, use_container_width=True, height=700, returned_objects=[])
 
         # ── Qualifying parcels table ──────────────────────────────────────────────────
         with st.expander(f"Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):

@@ -24,6 +24,8 @@ from config import (
     GH_OC_ZONING_SERVICE,
     FEMA_FLOOD_SERVICE,
     EGLE_WETLAND_SERVICE,
+    OTTAWA_DRAINS_SERVICE,
+    OTTAWA_DRAINS_WHERE,
 )
 
 # ── ArcGIS REST helper ────────────────────────────────────────────────────────
@@ -219,6 +221,38 @@ def load_wetlands(bbox: tuple, city_key: str, force_download: bool = False) -> g
     gdf.columns = [c.lower() for c in gdf.columns]
     gdf.to_file(cache, driver="GeoJSON")
     print(f"  Saved {len(gdf)} wetland polygons to {cache.name}")
+    return gdf
+
+
+# ── Ottawa County drains (OCWRC) ──────────────────────────────────────────────
+
+def load_drains(bbox: tuple, city_key: str, force_download: bool = False) -> gpd.GeoDataFrame:
+    """
+    Fetch Ottawa County (OCWRC) established county drains — DrainInfrastructure
+    layer 16 gravity mains filtered to a non-null DrainClassification (MI Drain
+    Code Ch 4/6/20/21 / Sec 433). Visual map overlay only; not used in scoring.
+    Ottawa County only. Caches to data/raw/<city_key>_drains.geojson.
+    """
+    cache = DATA_RAW / f"{city_key}_drains.geojson"
+
+    if cache.exists() and not force_download:
+        print(f"  Loading drains from cache: {cache.name}")
+        return gpd.read_file(cache)
+
+    print(f"  Downloading Ottawa County drains for {city_key} ...")
+    gdf = _arcgis_query(
+        OTTAWA_DRAINS_SERVICE, bbox,
+        extra_params={"where": OTTAWA_DRAINS_WHERE},
+        max_records=1000,
+    )
+
+    if gdf.empty:
+        print("  [info] No county drains found in area")
+        return gdf
+
+    gdf.columns = [c.lower() for c in gdf.columns]
+    gdf.to_file(cache, driver="GeoJSON")
+    print(f"  Saved {len(gdf)} county drain segments to {cache.name}")
     return gdf
 
 

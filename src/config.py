@@ -84,6 +84,32 @@ EGLE_WETLAND_SERVICE = (
     "/WrdOpenData/FeatureServer/11/query"
 )
 
+# ── Ottawa County Drains (OCWRC) ─────────────────────────────────────────────
+# Ottawa County Water Resources Commissioner drain infrastructure.
+# Layer 16 "All Gravity Mains" filtered to ESTABLISHED COUNTY DRAINS only
+# (DrainClassification set = MI Drain Code Ch 4/6/20/21 or Sec 433). These are
+# the development-relevant drains — they carry easements/setbacks and drain-
+# district assessments. Private storm sewers (null classification) are excluded.
+# Ottawa County only. Visual map overlay only (not scored). Keyed by MainType.
+# Caches to data/raw/<city_key>_drains.geojson.
+OTTAWA_DRAINS_SERVICE = (
+    "https://gis.miottawa.org/arcgis/rest/services/HostedServices"
+    "/DrainInfrastructure/FeatureServer/16/query"
+)
+OTTAWA_DRAINS_WHERE = "DrainClassification IS NOT NULL AND DrainClassification <> ''"
+
+# MainType → map color (this is the on-map legend / key for the Drains layer).
+DRAIN_MAINTYPE_COLORS = {
+    "Open Channel": "#b45309",  # amber-brown — open ditch (most visible/constraining)
+    "Culvert":      "#ea580c",  # orange       — culverted crossing
+    "Collector":    "#7c3aed",  # purple       — piped collector main
+    "Storm Lead":   "#a78bfa",  # light purple — piped lead
+    "Underdrain":   "#0891b2",  # cyan         — subsurface underdrain
+    "Bioswale":     "#16a34a",  # green        — vegetated swale
+    "Siphon":       "#db2777",  # pink         — siphon
+}
+DRAIN_DEFAULT_COLOR = "#6b7280"  # gray — other / unspecified type
+
 # ── Parcel filtering thresholds ───────────────────────────────────────────────
 MIN_ACRES            = 2.0     # hard filter: below this is too small
 MAX_FLOOD_PCT        = 0.25    # hard filter: >25% floodplain = disqualify

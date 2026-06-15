@@ -1,23 +1,30 @@
 """
-WR-Dev Site Selection — navigation SKELETON / mockup.
+WR-Dev Site Selection — navigation shell (main entry point).
 
-This is a clickable layout prototype, NOT the real tool. It demonstrates the
-proposed three-section structure so the big picture can be reviewed before any
-real data work happens:
+Run with:  streamlit run src/app_shell.py
+
+The shell owns the four "once-per-app" concerns — page config, brand CSS,
+login/auth, and the logo — and routes between three sections:
 
     Landing page (3 section cards)
         └─▶ Section view: persistent stepper  +  exec/analyst toggle  +  content
 
-Run it standalone (does not touch the working Land Screener in app.py):
-    streamlit run src/app_shell.py
-
-Everything below is placeholder content. Real data + the existing Land Screener
-get folded in later, once this layout is approved.
+    1. Market Feasibility  (placeholder — data pipeline pending)
+    2. Land Screener       (the real tool, via app.render_land)
+    3. Financial Review    (placeholder)
 """
 
+import sys
 from pathlib import Path
 
 import streamlit as st
+import yaml
+from yaml.loader import SafeLoader
+import streamlit_authenticator as stauth
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).parent))
+import app  # noqa: E402 — Land Screener module; exposes render_land()
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -28,11 +35,17 @@ st.set_page_config(
 )
 
 # ── WR-Dev logo (top-left) ───────────────────────────────────────────────────────
-_LOGO_PATH = Path(__file__).parent.parent / "assets" / "wr_dev_logo.png"
+_LOGO_PATH = ROOT / "assets" / "wr_dev_logo.png"
 if _LOGO_PATH.exists():
     st.logo(str(_LOGO_PATH), size="large")
 
-# ── WR-Dev brand CSS (matches the real app) ─────────────────────────────────────
+# ── Brand CSS ────────────────────────────────────────────────────────────────────
+# app.py owns the full brand/widget stylesheet (buttons, sliders, tabs, metrics,
+# pink→teal overrides). Inject it first; the shell-specific block below then
+# overrides a few things (teal h1, enlarged logo).
+app.inject_brand_css()
+
+# ── Shell-specific CSS (cards, stepper, overrides) ───────────────────────────────
 st.markdown("""
 <style>
 html, body, [class*="css"], button, input, select, textarea {
@@ -67,7 +80,8 @@ h2, h3 { color: var(--wr-teal) !important; }
     border-left: 5px solid var(--wr-teal);
     border-radius: 10px;
     padding: 22px 22px 12px 22px;
-    min-height: 190px;
+    height: 240px;            /* fixed so all three cards match regardless of text length */
+    box-sizing: border-box;
 }
 .section-card .num {
     color: var(--wr-teal);
@@ -105,6 +119,40 @@ h2, h3 { color: var(--wr-teal) !important; }
 }
 </style>
 """, unsafe_allow_html=True)
+
+# ── Authentication (gates the WHOLE app — all three sections) ────────────────────
+_CRED_FILE = ROOT / "credentials.yaml"
+if not _CRED_FILE.exists():
+    st.error(
+        "credentials.yaml not found. "
+        "Run `python manage_users.py` from the project root to create user accounts."
+    )
+    st.stop()
+
+with open(_CRED_FILE) as _f:
+    _auth_config = yaml.load(_f, Loader=SafeLoader)
+
+_authenticator = stauth.Authenticate(
+    _auth_config["credentials"],
+    _auth_config["cookie"]["name"],
+    _auth_config["cookie"]["key"],
+    _auth_config["cookie"]["expiry_days"],
+    auto_hash=False,   # passwords are pre-hashed by manage_users.py
+)
+
+_authenticator.login()
+
+if st.session_state["authentication_status"] is False:
+    st.error("Incorrect username or password.")
+    st.stop()
+elif st.session_state["authentication_status"] is None:
+    st.info("Please log in to access the WR-Dev Site Selection tool.")
+    st.stop()
+
+# ── Logged in — determine role ───────────────────────────────────────────────────
+_username  = st.session_state["username"]
+_user_data = _auth_config["credentials"]["usernames"].get(_username, {})
+IS_ADMIN   = _user_data.get("role") == "admin"
 
 # ── Navigation state ─────────────────────────────────────────────────────────────
 # "home" = landing page; otherwise one of the three section keys.
@@ -225,27 +273,12 @@ def render_market():
 
 
 def render_land():
-    st.subheader("2. Land Screener")
+    # Carry-forward (submarket → land) is wired in a later step. For now, embed
+    # the real Land Screener exactly as-is via app.render_land().
     sm = st.session_state.submarket
     if sm:
-        st.caption(f"🔗 Filtered to submarket from Market Feasibility: **{sm}**")
-    view_toggle("land")
-    st.markdown('<div class="placeholder">🏗️ Your existing Land Screener '
-                '(map + scored parcels + filters) gets embedded here.<br>'
-                '<small>Nothing is rebuilt — the working tool moves in as-is.</small>'
-                '</div>', unsafe_allow_html=True)
-
-    # Carry-forward demo: pick a parcel → flows into Financial
-    parcel = st.selectbox("Pick a parcel (demo)",
-                          ["— none —", "Parcel A (4.2 ac)", "Parcel B (6.8 ac)"],
-                          key="land_parcel")
-    st.session_state.parcel = None if parcel == "— none —" else parcel
-    if st.session_state.parcel:
-        st.success(f"Selected **{st.session_state.parcel}** will carry into "
-                   f"Financial Review.", icon="🔗")
-
-    st.button("Continue to Financial Review →", on_click=go,
-              args=("financial",), type="primary")
+        st.caption(f"🔗 Submarket carried from Market Feasibility: **{sm}**")
+    app.render_land(_username, _user_data, IS_ADMIN, _authenticator)
 
 
 def render_financial():

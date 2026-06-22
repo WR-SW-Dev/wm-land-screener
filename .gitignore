@@ -46,3 +46,6 @@ Thumbs.db
 
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
+
+# ── Utility map PDFs (large binaries; source for water/sewer extraction) ────────
+data/utility_pdfs/

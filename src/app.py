@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (CITIES, OUTPUT_DIR, MIN_ACRES, MAX_FLOOD_PCT,  # noqa: E402
                     DRAIN_MAINTYPE_COLORS, DRAIN_DEFAULT_COLOR)
+from utility_pdf import WATER_SIZE_HEX                              # noqa: E402
 from scoring import SCORE_COMPONENTS                              # noqa: E402
 
 # ── Brand CSS (owned here; injected by the shell) ────────────────────────────
@@ -290,6 +291,15 @@ def load_drains_overlay(city_key: str) -> gpd.GeoDataFrame:
     return gpd.read_file(path)
 
 
+@st.cache_data(ttl=300)
+def load_water_overlay(city_key: str) -> gpd.GeoDataFrame:
+    """Load cached water-main lines extracted from the township PDF (if any)."""
+    path = ROOT / "data" / "utility" / f"{city_key}_water.geojson"
+    if not path.exists():
+        return gpd.GeoDataFrame()
+    return gpd.read_file(path)
+
+
 def run_pipeline(city_key: str, force: bool = False):
     """Run the pipeline as a subprocess and stream output into the UI."""
     cmd = [sys.executable, str(ROOT / "src" / "pipeline.py"), "--city", city_key]
@@ -322,7 +332,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
              mode_label: str = "Single-Family",
              wetlands_gdf: gpd.GeoDataFrame = None,
              tracker: dict = None,
-             drains_gdf: gpd.GeoDataFrame = None) -> folium.Map:
+             drains_gdf: gpd.GeoDataFrame = None,
+             water_gdf: gpd.GeoDataFrame = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     tracker = tracker or {}
     min_lon, min_lat, max_lon, max_lat = bbox
@@ -391,27 +402,25 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             ),
         ).add_to(drain_group)
         drain_group.add_to(m)
+        # (legend rendered below the map in Streamlit, not as an in-map overlay)
 
-        # On-map legend / key — only the MainTypes actually present, kept compact.
-        present = [mt for mt in DRAIN_MAINTYPE_COLORS
-                   if mt in set(drains_4326.get("maintype", []).dropna())]
-        if present:
-            rows = "".join(
-                f'<div style="margin:2px 0;"><span style="display:inline-block;'
-                f'width:14px;height:3px;background:{DRAIN_MAINTYPE_COLORS[mt]};'
-                f'vertical-align:middle;margin-right:6px;"></span>{mt}</div>'
-                for mt in present
-            )
-            legend_html = (
-                '<div style="position:fixed;bottom:24px;left:12px;z-index:9999;'
-                'background:rgba(255,255,255,0.92);border:1px solid #C5C5B9;'
-                'border-radius:6px;padding:8px 10px;font-family:Arial,sans-serif;'
-                'font-size:11px;color:#2c3e3f;box-shadow:0 1px 4px rgba(0,0,0,0.15);">'
-                '<div style="font-weight:600;margin-bottom:4px;">County Drains'
-                '<span style="font-weight:400;color:#888;"> (toggle "Drains")</span></div>'
-                f'{rows}</div>'
-            )
-            m.get_root().html.add_child(folium.Element(legend_html))
+    # ── Water mains overlay (added when toggled; legend rendered below map) ───────
+    if water_gdf is not None and not water_gdf.empty:
+        water_4326 = water_gdf.to_crs("EPSG:4326")
+
+        def _water_style(feat):
+            sz = str(feat["properties"].get("spec") or "")
+            return {"color": WATER_SIZE_HEX.get(sz, "#0070ff"), "weight": 2.5, "opacity": 0.85}
+
+        water_group = folium.FeatureGroup(name="Water mains", show=False)
+        folium.GeoJson(
+            water_4326.__geo_interface__,
+            style_function=_water_style,
+            highlight_function=lambda _x: {"weight": 5, "opacity": 1.0},
+            tooltip=folium.GeoJsonTooltip(fields=["spec"], aliases=["Water main (in):"]),
+        ).add_to(water_group)
+        water_group.add_to(m)
+        # (legend rendered below the map in Streamlit, not as an in-map overlay)
 
     if gdf is None or gdf.empty:
         folium.LayerControl(position="topright", collapsed=False).add_to(m)
@@ -891,10 +900,41 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         _mode_label_map = "Multifamily" if USE_MF else "Single-Family"
         _wetlands_overlay = load_wetlands_overlay(city_key)
         _drains_overlay = load_drains_overlay(city_key)
+        _water_overlay = load_water_overlay(city_key)
+
+        # Utility overlays are toggled in the map's top-right control (instant,
+        # no reload). Always pass them; their labeled keys render below the map.
+        _has_drains = not _drains_overlay.empty
+        _has_water = not _water_overlay.empty
+
         m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
                      wetlands_gdf=_wetlands_overlay, tracker=tracker,
-                     drains_gdf=_drains_overlay)
+                     drains_gdf=_drains_overlay, water_gdf=_water_overlay)
         st_folium(m, use_container_width=True, height=700, returned_objects=[])
+
+        # Overlay keys below the map (labeled), for the in-map toggles.
+        def _legend_row(color, label):
+            return (f'<span style="display:inline-block;margin-right:14px;white-space:nowrap;">'
+                    f'<span style="display:inline-block;width:18px;height:3px;background:{color};'
+                    f'vertical-align:middle;margin-right:5px;"></span>{label}</span>')
+        if _has_drains or _has_water:
+            st.caption("Overlay keys — toggle the layers in the map's top-right control.")
+            _lc = st.columns(2)
+            if _has_drains:
+                _types = [t for t in DRAIN_MAINTYPE_COLORS
+                          if t in set(_drains_overlay.get("maintype", []).dropna())]
+                _lc[0].markdown(
+                    "**County Drains**<br>"
+                    + "".join(_legend_row(DRAIN_MAINTYPE_COLORS[t], t) for t in _types),
+                    unsafe_allow_html=True)
+            if _has_water:
+                _sizes = [s for s in WATER_SIZE_HEX
+                          if s in set(_water_overlay.get("spec", []).dropna().astype(str))]
+                _lc[1].markdown(
+                    '**Water Mains** <span style="color:#999;font-size:11px;">'
+                    '(~40 ft accuracy · static PDF snapshot)</span><br>'
+                    + "".join(_legend_row(WATER_SIZE_HEX[s], f'{s}"') for s in _sizes),
+                    unsafe_allow_html=True)
 
         # ── Qualifying parcels table ──────────────────────────────────────────────────
         with st.expander(f"Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):

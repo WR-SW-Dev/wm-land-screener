@@ -23,7 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 from config import (CITIES, OUTPUT_DIR, MIN_ACRES, MAX_FLOOD_PCT,  # noqa: E402
                     DRAIN_MAINTYPE_COLORS, DRAIN_DEFAULT_COLOR)
-from utility_pdf import WATER_SIZE_HEX                              # noqa: E402
+from utility_pdf import (WATER_SIZE_HEX, SEWER_SPEC_HEX,           # noqa: E402
+                         sewer_spec_label)
 from scoring import SCORE_COMPONENTS                              # noqa: E402
 
 # ── Brand CSS (owned here; injected by the shell) ────────────────────────────
@@ -300,6 +301,15 @@ def load_water_overlay(city_key: str) -> gpd.GeoDataFrame:
     return gpd.read_file(path)
 
 
+@st.cache_data(ttl=300)
+def load_sewer_overlay(city_key: str) -> gpd.GeoDataFrame:
+    """Load cached sewer (gravity + force main) lines from the township PDF (if any)."""
+    path = ROOT / "data" / "utility" / f"{city_key}_sewer.geojson"
+    if not path.exists():
+        return gpd.GeoDataFrame()
+    return gpd.read_file(path)
+
+
 def run_pipeline(city_key: str, force: bool = False):
     """Run the pipeline as a subprocess and stream output into the UI."""
     cmd = [sys.executable, str(ROOT / "src" / "pipeline.py"), "--city", city_key]
@@ -333,7 +343,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
              wetlands_gdf: gpd.GeoDataFrame = None,
              tracker: dict = None,
              drains_gdf: gpd.GeoDataFrame = None,
-             water_gdf: gpd.GeoDataFrame = None) -> folium.Map:
+             water_gdf: gpd.GeoDataFrame = None,
+             sewer_gdf: gpd.GeoDataFrame = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     tracker = tracker or {}
     min_lon, min_lat, max_lon, max_lat = bbox
@@ -420,6 +431,26 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             tooltip=folium.GeoJsonTooltip(fields=["spec"], aliases=["Water main (in):"]),
         ).add_to(water_group)
         water_group.add_to(m)
+        # (legend rendered below the map in Streamlit, not as an in-map overlay)
+
+    # ── Sewer mains overlay (added when present; legend rendered below map) ───────
+    if sewer_gdf is not None and not sewer_gdf.empty:
+        sewer_4326 = sewer_gdf.to_crs("EPSG:4326")
+
+        def _sewer_style(feat):
+            sp = str(feat["properties"].get("spec") or "")
+            dash = "4,4" if sp == "FM" else None   # force main = dashed
+            return {"color": SEWER_SPEC_HEX.get(sp, "#6fb300"), "weight": 2.5,
+                    "opacity": 0.85, "dashArray": dash}
+
+        sewer_group = folium.FeatureGroup(name="Sewer mains", show=False)
+        folium.GeoJson(
+            sewer_4326.__geo_interface__,
+            style_function=_sewer_style,
+            highlight_function=lambda _x: {"weight": 5, "opacity": 1.0},
+            tooltip=folium.GeoJsonTooltip(fields=["spec"], aliases=["Sewer main:"]),
+        ).add_to(sewer_group)
+        sewer_group.add_to(m)
         # (legend rendered below the map in Streamlit, not as an in-map overlay)
 
     if gdf is None or gdf.empty:
@@ -901,15 +932,18 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         _wetlands_overlay = load_wetlands_overlay(city_key)
         _drains_overlay = load_drains_overlay(city_key)
         _water_overlay = load_water_overlay(city_key)
+        _sewer_overlay = load_sewer_overlay(city_key)
 
         # Utility overlays are toggled in the map's top-right control (instant,
         # no reload). Always pass them; their labeled keys render below the map.
         _has_drains = not _drains_overlay.empty
         _has_water = not _water_overlay.empty
+        _has_sewer = not _sewer_overlay.empty
 
         m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
                      wetlands_gdf=_wetlands_overlay, tracker=tracker,
-                     drains_gdf=_drains_overlay, water_gdf=_water_overlay)
+                     drains_gdf=_drains_overlay, water_gdf=_water_overlay,
+                     sewer_gdf=_sewer_overlay)
         st_folium(m, use_container_width=True, height=700, returned_objects=[])
 
         # Overlay keys below the map (labeled), for the in-map toggles.
@@ -917,24 +951,28 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
             return (f'<span style="display:inline-block;margin-right:14px;white-space:nowrap;">'
                     f'<span style="display:inline-block;width:18px;height:3px;background:{color};'
                     f'vertical-align:middle;margin-right:5px;"></span>{label}</span>')
-        if _has_drains or _has_water:
+        _legends = []
+        if _has_drains:
+            _types = [t for t in DRAIN_MAINTYPE_COLORS
+                      if t in set(_drains_overlay.get("maintype", []).dropna())]
+            _legends.append("**County Drains**<br>"
+                            + "".join(_legend_row(DRAIN_MAINTYPE_COLORS[t], t) for t in _types))
+        if _has_water:
+            _sizes = [s for s in WATER_SIZE_HEX
+                      if s in set(_water_overlay.get("spec", []).dropna().astype(str))]
+            _legends.append(
+                '**Water Mains** <span style="color:#999;font-size:11px;">(~40 ft · PDF snapshot)</span><br>'
+                + "".join(_legend_row(WATER_SIZE_HEX[s], f'{s}"') for s in _sizes))
+        if _has_sewer:
+            _specs = [s for s in SEWER_SPEC_HEX
+                      if s in set(_sewer_overlay.get("spec", []).dropna().astype(str))]
+            _legends.append(
+                '**Sewer Mains** <span style="color:#999;font-size:11px;">(~30 ft · PDF snapshot)</span><br>'
+                + "".join(_legend_row(SEWER_SPEC_HEX[s], sewer_spec_label(s)) for s in _specs))
+        if _legends:
             st.caption("Overlay keys — toggle the layers in the map's top-right control.")
-            _lc = st.columns(2)
-            if _has_drains:
-                _types = [t for t in DRAIN_MAINTYPE_COLORS
-                          if t in set(_drains_overlay.get("maintype", []).dropna())]
-                _lc[0].markdown(
-                    "**County Drains**<br>"
-                    + "".join(_legend_row(DRAIN_MAINTYPE_COLORS[t], t) for t in _types),
-                    unsafe_allow_html=True)
-            if _has_water:
-                _sizes = [s for s in WATER_SIZE_HEX
-                          if s in set(_water_overlay.get("spec", []).dropna().astype(str))]
-                _lc[1].markdown(
-                    '**Water Mains** <span style="color:#999;font-size:11px;">'
-                    '(~40 ft accuracy · static PDF snapshot)</span><br>'
-                    + "".join(_legend_row(WATER_SIZE_HEX[s], f'{s}"') for s in _sizes),
-                    unsafe_allow_html=True)
+            for _col, _md in zip(st.columns(len(_legends)), _legends):
+                _col.markdown(_md, unsafe_allow_html=True)
 
         # ── Qualifying parcels table ──────────────────────────────────────────────────
         with st.expander(f"Qualifying parcels  ({len(qual_filtered)} shown)", expanded=True):

@@ -46,6 +46,20 @@ WATER_SIZE_HEX = {
     "16": "#5ad2aa", "20": "#be00ff", "24": "#0000c8",
 }
 
+# Sewer: gravity main by size + force main. Stroke RGB (0-1) -> spec.
+SEWER_MAIN_COLORS = {
+    (0.44, 0.66, 0.0): "8",  (1.0, 0.67, 0.0): "10", (0.0, 0.4, 1.0): "12",
+    (0.5, 0.5, 0.0): "15",   (0.67, 0.4, 0.8): "18", (0.5, 0.3, 0.0): "21",
+    (1.0, 0.0, 0.7): "24",   (1.0, 0.0, 0.0): "FM",
+}
+SEWER_SPEC_HEX = {
+    "8": "#6fb300", "10": "#ffab00", "12": "#0066ff", "15": "#808000",
+    "18": "#b366cc", "21": "#804d00", "24": "#ff00b3", "FM": "#e00000",
+}
+# Legend label per spec: sizes show as e.g. 8"; FM = Force main.
+def sewer_spec_label(spec):
+    return "Force main" if spec == "FM" else f'{spec}"'
+
 # ── Per-map registry ─────────────────────────────────────────────────────────────
 UTILITY_MAPS = {
     "slt_water": {
@@ -56,7 +70,15 @@ UTILITY_MAPS = {
         "legend": WATER_MAIN_COLORS,
         "out": "spring_lake_twp_water.geojson",
     },
-    # Phase 2: slt_sewer, ght_water, ght_sewer added here.
+    # NOTE: SLT sewer + both Grand Haven Twp maps are intentionally NOT registered.
+    # Only the SLT water map (Ottawa County template) prints extractable SECTION
+    # NUMBERS, which the automatic georeference() relies on. The sewer map's text
+    # is outlined (not extractable) and the GH Twp maps are aerial with no section
+    # numbers — so section-grid georeferencing can't lock onto them, and a build
+    # here produced a degenerate (collapsed) layer. These await the underlying GIS
+    # shapefiles from the townships / Prein & Newhof (the PDFs were generated from
+    # GIS), which would give exact georeferenced data. The sewer color/spec maps
+    # and the app's "Sewer mains" rendering are kept ready for that source data.
 }
 
 

@@ -248,7 +248,8 @@ def score_parcel(row: pd.Series) -> float:
     comps = score_components(row)
     base_raw   = comps["pts_density"] + comps["pts_wetland"] + comps["pts_flood"] + comps["pts_shape"]
     base_score = round(base_raw / _BASE_MAX * 100, 1)
-    return round(base_score + comps["pts_rezoning"], 1)
+    # Rezoning is a bonus on top of the 0–100 base, but the total is capped at 100.
+    return round(min(base_score + comps["pts_rezoning"], 100.0), 1)
 
 
 # ── Development pathway classification ────────────────────────────────────────
@@ -373,8 +374,8 @@ def add_scores(parcels: gpd.GeoDataFrame, zoning_table: dict = None,
             + breakdown["pts_flood"] + breakdown["pts_shape"]
         )
         base_score = (base_raw / _BASE_MAX * 100).round(1)
-        # Rezoning is a bonus — can push score above 100, never penalises
-        p.loc[mask, "score"] = (base_score + breakdown["pts_rezoning"]).round(1)
+        # Rezoning is a bonus on top of the 0–100 base; total is capped at 100.
+        p.loc[mask, "score"] = (base_score + breakdown["pts_rezoning"]).clip(upper=100).round(1)
     else:
         for comp in SCORE_COMPONENTS:
             p[comp["key"]] = 0.0

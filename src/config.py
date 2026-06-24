@@ -330,8 +330,8 @@ CITIES = {
         "bbox":           (-86.32, 42.93, -86.14, 43.12),
         "county":         "ottawa",
         "govt_unit":      "GRAND HAVEN TOWNSHIP",  # filter county parcels to this municipality
-        # min_acres uses global MIN_ACRES (4.0) — more rural/suburban land
-        "parcel_service": GH_OC_PARCEL_SERVICE,   # None — not yet configured (see TODO above)
+        # min_acres uses global MIN_ACRES (2.0) — more rural/suburban land
+        "parcel_service": GH_OC_PARCEL_SERVICE,   # Ottawa County parcels (filtered by govt_unit)
         "zoning_service": GH_OC_ZONING_SERVICE,   # Ottawa County Layer 0 (confirmed live)
         "zoning_table":   GH_TOWNSHIP_ZONING,
         # Future Land Use — same Ottawa County service as Grand Haven city
@@ -349,7 +349,7 @@ CITIES = {
         "bbox":           (-86.28, 43.02, -86.07, 43.22),
         "county":         "ottawa",
         "govt_unit":      "SPRING LAKE TOWNSHIP",  # filter county parcels to this municipality
-        "parcel_service": GH_OC_PARCEL_SERVICE,   # None — not yet configured (see TODO above)
+        "parcel_service": GH_OC_PARCEL_SERVICE,   # Ottawa County parcels (filtered by govt_unit)
         "zoning_service": GH_OC_ZONING_SERVICE,   # Ottawa County Layer 0 (confirmed live)
         "zoning_table":   SPRING_LAKE_TWP_ZONING,
         # Future Land Use

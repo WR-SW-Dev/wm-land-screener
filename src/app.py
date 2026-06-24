@@ -896,13 +896,13 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         # Recompute density score and total score using MF density + MF ceiling (30 u/ac)
         qual_all["max_units_per_acre"] = qual_all[MF_DENSITY_COL]
         qual_all["pts_density"] = (qual_all[MF_DENSITY_COL] / 30).clip(upper=1.0).mul(40).round(1)
-        # Base score (4 components, max 100) + rezoning bonus on top (no clip at 100)
+        # Base score (4 components, max 100) + rezoning bonus on top, capped at 100
         base_cols = ["pts_density", "pts_wetland", "pts_flood", "pts_shape"]
         existing_base = [c for c in base_cols if c in qual_all.columns]
         base_score = qual_all[existing_base].fillna(0).sum(axis=1).round(1)
         rezone_bonus = qual_all["pts_rezoning"].fillna(0) if "pts_rezoning" in qual_all.columns \
                        else pd.Series(0, index=qual_all.index)
-        qual_all["score"] = (base_score + rezone_bonus).round(1)
+        qual_all["score"] = (base_score + rezone_bonus).clip(upper=100).round(1)
 
         # Recompute unit estimates using MF density
         net = qual_all["net_dev_acres"] if "net_dev_acres" in qual_all.columns \

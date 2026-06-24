@@ -25,6 +25,7 @@ from config import (CITIES, OUTPUT_DIR, MIN_ACRES, MAX_FLOOD_PCT,  # noqa: E402
                     DRAIN_MAINTYPE_COLORS, DRAIN_DEFAULT_COLOR)
 from utility_pdf import (WATER_SIZE_HEX, SEWER_SPEC_HEX,           # noqa: E402
                          sewer_spec_label)
+from ordinance import load_ordinance, get_district, ordinance_url  # noqa: E402
 from scoring import SCORE_COMPONENTS                              # noqa: E402
 
 # ── Brand CSS (owned here; injected by the shell) ────────────────────────────
@@ -338,13 +339,57 @@ def run_pipeline(city_key: str, force: bool = False):
             status.update(label="Pipeline failed — see output above", state="error")
 
 
+def _zoning_reqs_html(district: dict, url: str = "") -> str:
+    """Compact zoning-requirements block for the parcel popup ('' if no data)."""
+    if not district:
+        return ""
+    rows = []
+    ml = district.get("min_lot_area_sqft")
+    mw = district.get("min_lot_width_ft")
+    if ml:
+        s = f"Min lot: {int(ml):,} sqft"
+        if mw:
+            s += f" · {int(mw)} ft wide"
+        rows.append(s)
+    note = district.get("setbacks_note")
+    sb = district.get("setbacks") or {}
+    if note:
+        rows.append(f"Setbacks: {note}")
+    elif any(sb.get(k) is not None for k in ("front_ft", "side_ft", "rear_ft")):
+        rows.append(f"Setbacks F/S/R: {sb.get('front_ft', '–')}/"
+                    f"{sb.get('side_ft', '–')}/{sb.get('rear_ft', '–')} ft")
+    extra = []
+    cov = district.get("max_lot_coverage_pct")
+    h = district.get("max_height_ft")
+    fa = district.get("min_floor_area_sqft")
+    if cov is not None:
+        extra.append(f"Max cover: {cov * 100:.0f}%")
+    if h:
+        extra.append(f"Max height: {int(h)} ft")
+    if fa:
+        extra.append(f"Min floor: {int(fa):,} sqft")
+    if extra:
+        rows.append(" · ".join(extra))
+    if not rows:
+        return ""
+    link = (f' · <a href="{url}" target="_blank" style="color:#779FA1;">full ordinance →</a>'
+            if url else "")
+    use_note = district.get("use_note")
+    note_html = (f'<div style="color:#888;font-size:11px;margin-top:3px;font-style:italic;">{use_note}</div>'
+                 if use_note else "")
+    return ('<div style="margin-top:5px;font-size:12px;background:#f5f6f4;'
+            'border-radius:5px;padding:6px 8px;line-height:1.5;">'
+            f'<b>Zoning requirements</b>{link}<br>{"<br>".join(rows)}{note_html}</div>')
+
+
 def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
              mode_label: str = "Single-Family",
              wetlands_gdf: gpd.GeoDataFrame = None,
              tracker: dict = None,
              drains_gdf: gpd.GeoDataFrame = None,
              water_gdf: gpd.GeoDataFrame = None,
-             sewer_gdf: gpd.GeoDataFrame = None) -> folium.Map:
+             sewer_gdf: gpd.GeoDataFrame = None,
+             ordinance: dict = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     tracker = tracker or {}
     min_lon, min_lat, max_lon, max_lat = bbox
@@ -485,6 +530,12 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         net    = float(row.get("net_dev_acres", 0) or 0)
         zone_c = row.get("zone_code", "")  or ""
         zone_l = row.get("zone_label", "") or ""
+        # Zoning ordinance link + requirements (from data/ordinance/<city>_zoning.json)
+        _zurl = ordinance_url(zone_c, ordinance or {})
+        zone_disp = (f'<a href="{_zurl}" target="_blank" '
+                     f'style="color:#779FA1;font-weight:600;">{zone_c}</a>'
+                     if _zurl and zone_c else zone_c)
+        reqs_block = _zoning_reqs_html(get_district(zone_c, ordinance or {}), _zurl)
         u_con  = int(row.get("units_conservative", 0) or 0)
         u_opt  = int(row.get("units_optimistic",   0) or 0)
         density_val = float(row.get("max_units_per_acre", 0) or 0)
@@ -604,7 +655,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
             f"<span style='color:{'#f59e0b' if bldg_pct < 2 else '#ef4444'};font-weight:600;'>⚠️ {bldgs} structure{'s' if bldgs != 1 else ''} ({'< 0.1' if bldg_pct < 0.1 else f'{bldg_pct:.1f}'}% coverage)</span>"
         }</td></tr>
     <tr><td style="color:#888;">Zone</td>
-        <td colspan="2">{zone_c} — {zone_l}</td></tr>
+        <td colspan="2">{zone_disp} — {zone_l}</td></tr>
     <tr><td style="color:#888;">Density ({"MF" if mode_label == "Multifamily" else "SF"})</td>
         <td colspan="2">{density_val:.0f} u/ac</td></tr>
     <tr><td style="color:#888;">Pathway</td>
@@ -620,6 +671,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
     {flu_row}
     {f"<tr><td style='color:#888;'>Soil</td><td colspan='2'>{soil_1}</td></tr>" if soil_1 else ""}
   </table>
+  {reqs_block}
   <hr style="margin:6px 0;">
   <div style="font-weight:600;margin-bottom:4px;">
     Score: <span style="color:{color};">{score:.1f}</span>
@@ -933,6 +985,7 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         _drains_overlay = load_drains_overlay(city_key)
         _water_overlay = load_water_overlay(city_key)
         _sewer_overlay = load_sewer_overlay(city_key)
+        _ordinance = load_ordinance(city_key)
 
         # Utility overlays are toggled in the map's top-right control (instant,
         # no reload). Always pass them; their labeled keys render below the map.
@@ -943,7 +996,7 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
                      wetlands_gdf=_wetlands_overlay, tracker=tracker,
                      drains_gdf=_drains_overlay, water_gdf=_water_overlay,
-                     sewer_gdf=_sewer_overlay)
+                     sewer_gdf=_sewer_overlay, ordinance=_ordinance)
         st_folium(m, use_container_width=True, height=700, returned_objects=[])
 
         # Overlay keys below the map (labeled), for the in-map toggles.

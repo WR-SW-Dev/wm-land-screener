@@ -72,10 +72,18 @@ def _arcgis_query(endpoint: str, bbox: tuple, extra_params: dict = None,
             break
 
         all_features.extend(features)
-        # ArcGIS signals more pages with exceededTransferLimit
-        if not data.get("exceededTransferLimit", False):
+        # Decide whether to fetch another page. ArcGIS signals more pages with
+        # exceededTransferLimit, BUT that flag isn't reliably present in GeoJSON
+        # responses (it caused us to stop at the first 2,000-record page). So also
+        # keep going whenever the page came back full (== max_records) — a full
+        # page means the service hit its per-request cap and there's likely more.
+        more = data.get("exceededTransferLimit", False) or len(features) >= max_records
+        if not more:
             break
         offset += max_records
+        if offset > 200000:        # safety stop — no real layer here is this large
+            print(f"  [warn] pagination exceeded 200k records, stopping ({endpoint})")
+            break
         time.sleep(0.3)  # be polite
 
     if not all_features:
@@ -89,7 +97,7 @@ def _arcgis_query(endpoint: str, bbox: tuple, extra_params: dict = None,
 # ── Parcel data ───────────────────────────────────────────────────────────────
 
 def load_parcels(bbox: tuple, city_key: str, force_download: bool = False,
-                 service_url: str = None) -> gpd.GeoDataFrame:
+                 service_url: str = None, govt_unit: str = None) -> gpd.GeoDataFrame:
     """
     Fetch parcel data for the given bounding box from the specified ArcGIS service.
     Caches to data/raw/<city_key>_parcels.geojson.
@@ -98,14 +106,19 @@ def load_parcels(bbox: tuple, city_key: str, force_download: bool = False,
       - None: no service configured — use cache if available, otherwise return empty GDF.
       - Explicit URL: download from that endpoint.
       The pipeline resolves the correct URL from city_cfg before calling this function.
+    govt_unit: when set, keep only parcels whose 'governmentunitdescription' matches
+      (case-insensitive). The county-wide parcel service returns everything in the
+      bbox — which overlaps neighboring municipalities — so this restricts results
+      to the target municipality (e.g. only Grand Haven Township parcels). Applied
+      to both fresh downloads and cached reads; ignored if the field is absent
+      (e.g. the city-specific Grand Haven service).
     """
     cache = DATA_RAW / f"{city_key}_parcels.geojson"
 
     if cache.exists() and not force_download:
         print(f"  Loading parcels from cache: {cache.name}")
-        return gpd.read_file(cache)
-
-    if service_url is None:
+        gdf = gpd.read_file(cache)
+    elif service_url is None:
         # No service configured and no cache — tell the user how to fix it
         print(
             f"  [info] No parcel service configured for {city_key}.\n"
@@ -113,18 +126,23 @@ def load_parcels(bbox: tuple, city_key: str, force_download: bool = False,
             f"         or place a GeoJSON at data/raw/{city_key}_parcels.geojson."
         )
         return gpd.GeoDataFrame()
+    else:
+        print(f"  Downloading parcel data for {city_key} ...")
+        gdf = _arcgis_query(service_url, bbox)
+        if gdf.empty:
+            print("  [warn] No parcel data returned — check service URL in config.py")
+            return gdf
+        gdf.columns = [c.lower() for c in gdf.columns]   # normalise to lowercase
+        gdf.to_file(cache, driver="GeoJSON")
+        print(f"  Saved {len(gdf)} parcels to {cache.name}")
 
-    print(f"  Downloading parcel data for {city_key} ...")
-    gdf = _arcgis_query(service_url, bbox)
+    # Restrict to the target municipality (bbox overlaps neighbors on the county service)
+    if govt_unit and "governmentunitdescription" in gdf.columns:
+        before = len(gdf)
+        gdf = gdf[gdf["governmentunitdescription"].astype(str).str.strip().str.upper()
+                  == govt_unit.strip().upper()].copy()
+        print(f"  Restricted to municipality '{govt_unit}': {len(gdf)} of {before} parcels")
 
-    if gdf.empty:
-        print("  [warn] No parcel data returned — check service URL in config.py")
-        return gdf
-
-    # Normalise column names to lowercase
-    gdf.columns = [c.lower() for c in gdf.columns]
-    gdf.to_file(cache, driver="GeoJSON")
-    print(f"  Saved {len(gdf)} parcels to {cache.name}")
     return gdf
 
 

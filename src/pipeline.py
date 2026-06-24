@@ -75,7 +75,8 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
 
     # ── 1. Load raw layers ────────────────────────────────────────────────────
     print("\n[1/7] Loading parcels...")
-    parcels = load_parcels(bbox, city_key, force_download, service_url=parcel_svc)
+    parcels = load_parcels(bbox, city_key, force_download, service_url=parcel_svc,
+                           govt_unit=city_cfg.get("govt_unit"))
     if parcels.empty:
         print(f"  [error] No parcel data for {label}. Skipping.")
         return None

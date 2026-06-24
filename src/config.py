@@ -306,9 +306,9 @@ CITIES = {
     # ── Grand Haven city ──────────────────────────────────────────────────────
     "grand_haven": {
         "label":          "Grand Haven",
-        "bbox":           (-86.275, 43.045, -86.195, 43.095),
+        "bbox":           (-86.28, 43.020, -86.18, 43.095),
         "county":         "ottawa",
-        "min_acres":      2.0,   # matches global MIN_ACRES
+        "min_acres":      1.5,   # dense urban core — 2.0 yielded 0 vacant parcels; 1.5 floor (smaller = not developable for WR-Dev)
         # Data services
         "parcel_service": GH_PARCEL_SERVICE,      # wwplanning ArcGIS org (city-specific)
         "zoning_service": GH_ZONING_SERVICE,       # zZoning2020 layer — ZONE_ = short code
@@ -327,8 +327,9 @@ CITIES = {
     # Until then: place a GeoJSON at data/raw/gh_township_parcels.geojson to use cache.
     "gh_township": {
         "label":          "Grand Haven Township",
-        "bbox":           (-86.32, 43.00, -86.14, 43.12),
+        "bbox":           (-86.32, 42.93, -86.14, 43.12),
         "county":         "ottawa",
+        "govt_unit":      "GRAND HAVEN TOWNSHIP",  # filter county parcels to this municipality
         # min_acres uses global MIN_ACRES (4.0) — more rural/suburban land
         "parcel_service": GH_OC_PARCEL_SERVICE,   # None — not yet configured (see TODO above)
         "zoning_service": GH_OC_ZONING_SERVICE,   # Ottawa County Layer 0 (confirmed live)
@@ -345,8 +346,9 @@ CITIES = {
     # Same Ottawa County parcel/zoning/FLU situation as GH Township above.
     "spring_lake_twp": {
         "label":          "Spring Lake Township",
-        "bbox":           (-86.25, 43.07, -86.07, 43.22),
+        "bbox":           (-86.28, 43.02, -86.07, 43.22),
         "county":         "ottawa",
+        "govt_unit":      "SPRING LAKE TOWNSHIP",  # filter county parcels to this municipality
         "parcel_service": GH_OC_PARCEL_SERVICE,   # None — not yet configured (see TODO above)
         "zoning_service": GH_OC_ZONING_SERVICE,   # Ottawa County Layer 0 (confirmed live)
         "zoning_table":   SPRING_LAKE_TWP_ZONING,

@@ -189,18 +189,37 @@ def _build_county_map(bounds, needs, value_col, caption):
 
 def _render_rental_by_income(county_key, needs_raw):
     """Bar chart + table of the county's rental gap by AMI/rent band."""
+    import altair as alt
     from market.housing_needs import HOUSING_NEEDS
     bands = HOUSING_NEEDS[county_key]["rental_by_income"]
     bdf = pd.DataFrame(bands)
-    bdf["Band"] = bdf["ami"] + "  (" + bdf["rent"] + ")"
+    # Short AMI-band labels (rent range stays in tooltip + table) so the x-axis
+    # reads horizontally with no rotation or truncation.
+    order = bdf["ami"].tolist()
     st.markdown("**Rental units needed by income / rent band**")
-    st.bar_chart(bdf.set_index("Band")["units"], height=220, color="#779FA1")
-    st.dataframe(
-        bdf.rename(columns={"ami": "% of median income", "rent": "Monthly rent",
-                            "units": "Units needed"})[["% of median income",
-                                                       "Monthly rent", "Units needed"]]
-           .style.format({"Units needed": "{:,.0f}"}),
-        use_container_width=True, hide_index=True)
+    chart = (
+        alt.Chart(bdf)
+        .mark_bar(color="#779FA1")
+        .encode(
+            x=alt.X("ami:N", sort=order, title="% of area median income",
+                    axis=alt.Axis(labelAngle=0, labelLimit=1000, labelPadding=6)),
+            y=alt.Y("units:Q", title="Units needed"),
+            tooltip=[alt.Tooltip("ami", title="% of median income"),
+                     alt.Tooltip("rent", title="Monthly rent"),
+                     alt.Tooltip("units", title="Units needed", format=",")],
+        )
+        .properties(height=240)
+    )
+    tbl = (bdf.rename(columns={"ami": "% of median income", "rent": "Monthly rent",
+                               "units": "Units needed"})
+              [["% of median income", "Monthly rent", "Units needed"]]
+              .style.format({"Units needed": "{:,.0f}"}))
+
+    # Side by side, centered: equal spacer columns keep the pair off the edges
+    # and each element ~40% wide (readable, not stretched across the screen).
+    _, c_chart, c_table, _ = st.columns([1, 4, 4, 1])
+    c_chart.altair_chart(chart, use_container_width=True)
+    c_table.dataframe(tbl, use_container_width=True, hide_index=True)
 
 
 def _render_county_drilldown(county_key, needs, acs_df):
@@ -254,9 +273,16 @@ def _build_municipal_map(muni_bounds, muni_df, county_key):
     """Choropleth of one county's municipalities, shaded by demand score, zoomed in."""
     feats = [f for f in muni_bounds["features"]
              if f["properties"].get("county_key") == county_key]
-    score_by_key = muni_df.set_index(muni_df["key"].astype(str))["demand_score"].to_dict()
+    keyed = muni_df.set_index(muni_df["key"].astype(str))
+    score_by_key = keyed["demand_score"].to_dict()
+    # Boundary NAME is just the base name ("Grand Haven") and can't tell a city
+    # from its township; use the ACS-derived label ("Grand Haven city" vs
+    # "…charter township") so the map tooltip matches the dropdown/detail.
+    label_by_key = keyed["label"].to_dict()
     for f in feats:
-        f["properties"]["score"] = round(float(score_by_key.get(str(f["properties"]["key"]), 0) or 0), 1)
+        k = str(f["properties"]["key"])
+        f["properties"]["score"] = round(float(score_by_key.get(k, 0) or 0), 1)
+        f["properties"]["label"] = label_by_key.get(k, f["properties"].get("label"))
 
     m = folium.Map(tiles="cartodbpositron", control_scale=True)
     if feats:

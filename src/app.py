@@ -160,6 +160,13 @@ h2, h3 { color: var(--wr-teal) !important; font-family: Arial, sans-serif !impor
     border-color: var(--wr-teal) !important;
     background-color: var(--wr-teal) !important;
 }
+/* BaseWeb's radio DOM is [circle, input, text], so the `input:checked + div`
+   rule above lands on the LABEL TEXT, not the circle — re-clear that exact
+   selector (placed after it, equal specificity → wins) plus the text node. */
+[data-testid="stRadio"] input[type="radio"]:checked + div,
+[data-testid="stRadio"] label > div:last-child {
+    background-color: transparent !important;
+}
 
 /* ── Selectbox / number input focus ring — replace pink with teal ── */
 [data-baseweb="select"] [aria-selected="true"],

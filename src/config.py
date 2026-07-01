@@ -368,3 +368,93 @@ CITIES = {
     #              "zoning_table": {}, "flu_service": None, "flu_code_field": None,
     #              "flu_lu_table": {}},
 }
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SECTION 1 — MARKET FEASIBILITY (Phase 1.1: demographics & affordability)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── Census ACS configuration ──────────────────────────────────────────────────
+# Most recent ACS 5-year release (confirmed live). 5-year used (not 1-year) so
+# small geographies — townships — are covered. BASELINE is the non-overlapping
+# 5-year sample used for population-growth comparison.
+ACS_DATASET        = "acs/acs5"
+ACS_YEAR           = 2024
+ACS_BASELINE_YEAR  = 2019
+CENSUS_BASE_URL    = "https://api.census.gov/data"
+
+# ACS detail-table variables (acs/acs5 endpoint).
+ACS_VARS = {
+    "median_hh_income":  "B19013_001E",   # median household income ($)
+    "median_gross_rent": "B25064_001E",   # median gross rent ($/mo)
+    "median_age":        "B01002_001E",   # median age (years)
+    "population":        "B01003_001E",    # total population
+    "tenure_total":      "B25003_001E",   # occupied housing units
+    "tenure_renter":     "B25003_003E",   # renter-occupied units
+    "occ_total":         "B25002_001E",   # all housing units
+    "occ_occupied":      "B25002_002E",   # occupied units
+    "burden_total":      "B25070_001E",   # renters w/ computed rent-to-income
+    "burden_30_35":      "B25070_007E",   # 30.0–34.9% of income on rent
+    "burden_35_40":      "B25070_008E",   # 35.0–39.9%
+    "burden_40_50":      "B25070_009E",   # 40.0–49.9%
+    "burden_50_plus":    "B25070_010E",   # 50.0%+
+}
+# Variables only available on the Data-Profile endpoint (acs/acs5/profile).
+# `_moe` entries are the 90% margin of error for the matching estimate; used to
+# flag low-reliability small-sample estimates (e.g. townships) in the UI.
+ACS_PROFILE_VARS = {
+    "rental_vacancy_rate": "DP04_0005E",   # rental vacancy rate (%)
+    "rental_vacancy_moe":  "DP04_0005M",   # ± margin of error on the rate
+}
+
+# ── Affordability rule (WR-Dev BTR) ───────────────────────────────────────────
+# Max affordable monthly housing payment = median HH income / 12 × 30%.
+AFFORDABILITY_INCOME_SHARE = 0.30
+
+# ── Submarkets & competition geography ────────────────────────────────────────
+# Submarkets = the existing land-screener cities (Census county-subdivision FIPS,
+# all within Ottawa County 26139). Counties = tri-county competition/context band.
+# `screener_key` links a submarket to its CITIES entry (Market → Land carry-fwd).
+MARKET_SUBMARKETS = [
+    {"key": "grand_haven",    "label": "Grand Haven",        "screener_key": "grand_haven",
+     "geo": {"type": "cousub", "state": "26", "county": "139", "cousub": "33340"}},
+    {"key": "gh_township",    "label": "Grand Haven Twp",    "screener_key": "gh_township",
+     "geo": {"type": "cousub", "state": "26", "county": "139", "cousub": "33360"}},
+    {"key": "spring_lake_twp","label": "Spring Lake Twp",    "screener_key": "spring_lake_twp",
+     "geo": {"type": "cousub", "state": "26", "county": "139", "cousub": "75840"}},
+]
+MARKET_COUNTIES = [
+    {"key": "ottawa",   "label": "Ottawa County",   "geo": {"type": "county", "state": "26", "county": "139"}},
+    {"key": "kent",     "label": "Kent County",     "geo": {"type": "county", "state": "26", "county": "081"}},
+    {"key": "muskegon", "label": "Muskegon County", "geo": {"type": "county", "state": "26", "county": "121"}},
+    {"key": "allegan",  "label": "Allegan County",  "geo": {"type": "county", "state": "26", "county": "005"}},
+]
+
+# ── Demand-score weights (Phase 1.1) ──────────────────────────────────────────
+# 0–100 housing-need / BTR-demand score. Each signal is normalized 0–1 over the
+# band below, then weighted. Weights sum to 100. Higher score = more need.
+#   tightness     — inverted rental vacancy rate (low vacancy = tight = demand)
+#   cost_burden   — % of renters paying >30% of income on rent
+#   growth        — population growth since the baseline ACS sample
+#   renter_share  — renter-occupied share (size of the rental market)
+#   rent_pressure — median rent ÷ max-affordable rent (rent vs local incomes)
+DEMAND_WEIGHTS = {
+    "tightness":     30,
+    "cost_burden":   25,
+    "growth":        20,
+    "renter_share":  15,
+    "rent_pressure": 10,
+}
+# Normalization bands: (value_at_score_0, value_at_score_1). Clamped to [0,1].
+DEMAND_BANDS = {
+    "rental_vacancy_rate": (10.0, 0.0),    # 10%+ vacancy → 0 ; 0% → 1 (inverted)
+    "cost_burden_pct":     (20.0, 60.0),   # 20% burdened → 0 ; 60%+ → 1
+    "pop_growth_pct":      (-5.0, 20.0),   # −5% → 0 ; +20% → 1
+    "renter_share_pct":    (15.0, 55.0),   # 15% renters → 0 ; 55%+ → 1
+    "rent_to_afford":      (0.40, 1.00),   # rent 40% of affordable → 0 ; 100%+ → 1
+}
+
+# ── Census TIGERweb boundary service (choropleth geometries) ──────────────────
+# tigerWMS_Current MapServer. Layer ids are discovered at runtime by name match
+# (they shift between vintages), so only the base URL is pinned here.
+TIGERWEB_BASE = ("https://tigerweb.geo.census.gov/arcgis/rest/services/"
+                 "TIGERweb/tigerWMS_Current/MapServer")

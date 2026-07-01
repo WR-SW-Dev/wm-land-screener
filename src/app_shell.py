@@ -25,6 +25,7 @@ import streamlit_authenticator as stauth
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 import app  # noqa: E402 — Land Screener module; exposes render_land()
+from market.render import render_market as _render_market  # noqa: E402
 
 # ── Page config ────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -242,34 +243,10 @@ def view_toggle(key: str) -> str:
 
 
 def render_market():
-    st.subheader("1. Market Feasibility")
+    # Section 1 UI lives in market/render.py (auth-free, harness-testable).
+    # The shell owns the view toggle and supplies the Market → Land callback.
     view = view_toggle("market")
-
-    # Carry-forward demo: choosing a submarket here flows into Land
-    submarket = st.selectbox(
-        "Submarket (city)", ["Grand Haven", "Holland", "Muskegon"],
-        index=0, key="market_submarket",
-    )
-    st.session_state.submarket = submarket
-
-    if view == "Executive":
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Median HH income", "$ —", help="placeholder")
-        c2.metric("Max affordable rent (30%)", "$ —", help="income ÷ 12 × 30%")
-        c3.metric("Competing projects", "—")
-        st.markdown('<div class="placeholder">🗺️ Submarket demand heatmap + '
-                    'competitor pins<br><small>(map placeholder)</small></div>',
-                    unsafe_allow_html=True)
-    else:
-        st.markdown('<div class="placeholder">📊 Analyst tables: ACS demographics, '
-                    'unit-gap by income band, full competitor list with sources, '
-                    'score components<br><small>(tables placeholder)</small></div>',
-                    unsafe_allow_html=True)
-
-    st.success(f"Selected submarket **{submarket}** will carry into the Land "
-               f"Screener.", icon="🔗")
-    st.button("Continue to Land Screener →", on_click=go, args=("land",),
-              type="primary")
+    _render_market(view, on_continue=lambda: go("land"))
 
 
 def render_land():

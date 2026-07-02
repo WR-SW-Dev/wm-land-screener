@@ -25,6 +25,7 @@ from market.demographics import load_market_metrics, load_municipal_metrics
 from market.market_scoring import add_demand_score
 from market.boundaries import load_boundaries, load_municipal_boundaries
 from market.housing_needs import load_housing_needs
+from market import econ_dev
 from config import DEMAND_WEIGHTS
 
 # Green → red ramp; more need = red. Reused for both maps (rescaled per use).
@@ -98,6 +99,25 @@ _FMT = {
     "population":          ("Population",                 lambda v: f"{v:,.0f}"),
     "median_age":          ("Median age",                lambda v: f"{v:.0f}"),
 }
+
+# Column set + number formatting for the Analyst ACS tables (county + municipal).
+_ACS_TABLE_COLS = ["label", "demand_score", "median_hh_income", "max_affordable_rent",
+                   "median_gross_rent", "rental_vacancy_rate", "cost_burden_pct",
+                   "renter_share_pct", "occupancy_pct", "pop_growth_pct",
+                   "median_age", "population"]
+_ACS_TABLE_FMT = {
+    "median_hh_income": "${:,.0f}", "max_affordable_rent": "${:,.0f}",
+    "median_gross_rent": "${:,.0f}", "population": "{:,.0f}", "demand_score": "{:.1f}",
+    "rental_vacancy_rate": "{:.1f}%", "cost_burden_pct": "{:.1f}%",
+    "renter_share_pct": "{:.1f}%", "occupancy_pct": "{:.1f}%",
+    "pop_growth_pct": "{:+.1f}%", "median_age": "{:.0f}",
+}
+
+
+def _acs_table(frame, name_label):
+    """Styled ACS demographics table; `name_label` renames the label column."""
+    disp = frame[_ACS_TABLE_COLS].rename(columns={"label": name_label})
+    return disp.style.format(_ACS_TABLE_FMT, na_rep="—")
 
 
 @st.cache_data(show_spinner="Loading ACS + housing-needs data…")
@@ -242,6 +262,26 @@ def _render_county_drilldown(county_key, needs, acs_df):
     _render_rental_by_income(county_key, needs)
 
     st.divider()
+    st.markdown("##### Economic development")
+    econ = econ_dev.summary_by_county().get(county_key)
+    if econ and econ["projects"]:
+        e1, e2, e3 = st.columns(3)
+        e1.metric("Projected new jobs",
+                  f"+{econ['jobs']:,}" if econ["jobs"] else "—",
+                  help="Summed from the announcements you've kept for this county.")
+        e2.metric("Announced projects", econ["projects"])
+        inv = econ["investment_musd"]
+        inv_txt = ("—" if not inv else
+                   f"${inv/1000:.1f}B" if inv >= 1000 else f"${inv:,.0f}M")
+        e3.metric("Total investment", inv_txt)
+        tail = (f" from {econ['employers']} employer(s)" if econ["employers"] else "")
+        st.caption(f"From your kept economic-development announcements{tail}. "
+                   f"Add or edit the underlying items in the Analyst view.")
+    else:
+        st.caption("No kept economic-development announcements for this county yet — "
+                   "run **Scan now** and review them in the Analyst view.")
+
+    st.divider()
     st.markdown("##### Demographics & affordability")
     acs_match = acs_df[(acs_df["tier"] == "county") & (acs_df["key"] == county_key)]
     if not acs_match.empty:
@@ -363,6 +403,99 @@ def _render_municipalities(county_key, county_label, muni_df, muni_bounds):
     return sel_label
 
 
+# ── Economic development / employer news — on-demand scan + review inbox ───────
+def _render_econ_dev(county_keys, county_labels):
+    st.markdown("##### Economic development & employer news")
+    st.caption("On-demand scan for expansion / new-jobs / investment announcements "
+               "across the market counties (last ~60 days). Nothing is kept until "
+               "you approve it. Several outlets may cover the same project — keep "
+               "one, skip the duplicates.")
+
+    if st.button("🔎 Scan now", key="econ_scan"):
+        with st.spinner("Scanning West Michigan economic-development news…"):
+            try:
+                new, pending = econ_dev.run_scan()
+                st.success(f"Scan complete — {new} new item(s); {pending} pending review.")
+            except Exception as e:                   # noqa: BLE001
+                st.error(f"Scan failed: {e}")
+
+    queue = econ_dev.load_queue()
+    if not queue:
+        st.info("No scans yet — click **Scan now** to pull recent announcements.")
+        return
+
+    label_by_key = dict(zip(county_keys, county_labels))
+    pending = [v for v in queue.values() if v.get("status") == "pending"]
+    approved = [v for v in queue.values() if v.get("status") == "approved"]
+
+    def _by_county(records, ck):
+        return sorted([r for r in records if r["county_key"] == ck],
+                      key=lambda r: r.get("published_ts", ""), reverse=True)
+
+    st.markdown(f"**Review inbox — {len(pending)} pending**")
+    if not pending:
+        st.caption("Nothing pending — all caught up. ✅")
+    for ck in county_keys:
+        items = _by_county(pending, ck)
+        if not items:
+            continue
+        st.markdown(f"**{label_by_key.get(ck, ck)}** ({len(items)})")
+        for r in items:
+            col, keep, skip = st.columns([7, 1, 1])
+            date = (r.get("published", "") or "")[:16]
+            col.markdown(f"[{r['title']}]({r['link']})  \n"
+                         f"<small>{r.get('source','')} · {date}</small>",
+                         unsafe_allow_html=True)
+            keep.button("✓ Keep", key=f"ekeep_{r['id']}",
+                        on_click=econ_dev.set_status, args=(r["id"], "approved"))
+            skip.button("✕ Skip", key=f"eskip_{r['id']}",
+                        on_click=econ_dev.set_status, args=(r["id"], "rejected"))
+
+    if approved:
+        st.markdown(f"**Kept items — add job / investment details ({len(approved)})**")
+        st.caption("Click **Read →** to open the article, then fill in employer, "
+                   "projected jobs, and investment ($M). These feed the Executive "
+                   "summary. Tick **Send back** to return an item to the review inbox.")
+        rows = []
+        for r in sorted(approved, key=lambda x: (x["county_label"],
+                                                 x.get("published_ts", ""))):
+            rows.append({
+                "id": r["id"], "County": r["county_label"],
+                "Employer": r.get("employer", "") or "",
+                "Projected jobs": r.get("jobs"),
+                "Investment ($M)": r.get("investment_musd"),
+                "City": r.get("city", "") or "",
+                "Article": r["link"], "Headline": r["title"],
+                "Notes": r.get("notes", "") or "", "Send back": False,
+            })
+        edited = st.data_editor(
+            pd.DataFrame(rows), key="econ_editor", hide_index=True,
+            use_container_width=True,
+            column_config={
+                "id": None,
+                "County": st.column_config.TextColumn(disabled=True, width="small"),
+                "Article": st.column_config.LinkColumn("Article", display_text="Read →",
+                                                       disabled=True, width="small"),
+                "Headline": st.column_config.TextColumn(disabled=True, width="medium"),
+                "Employer": st.column_config.TextColumn(width="small"),
+                "Projected jobs": st.column_config.NumberColumn(format="%d", min_value=0),
+                "Investment ($M)": st.column_config.NumberColumn(format="%.0f", min_value=0),
+                "City": st.column_config.TextColumn(width="small"),
+                "Notes": st.column_config.TextColumn(width="small"),
+                "Send back": st.column_config.CheckboxColumn(width="small"),
+            },
+        )
+        for _, row in edited.iterrows():
+            if row["Send back"]:
+                econ_dev.set_status(row["id"], "pending")
+                continue
+            econ_dev.update_record(
+                row["id"], employer=(row["Employer"] or ""),
+                jobs=(int(row["Projected jobs"]) if pd.notna(row["Projected jobs"]) else None),
+                investment_musd=(float(row["Investment ($M)"]) if pd.notna(row["Investment ($M)"]) else None),
+                city=(row["City"] or ""), notes=(row["Notes"] or ""))
+
+
 # ── Main entry ─────────────────────────────────────────────────────────────────
 def render_market(view: str, on_continue):
     st.subheader("1. Market Feasibility")
@@ -453,30 +586,23 @@ def render_market(view: str, on_continue):
         st.caption("Source: county Housing Needs Assessments (Bowen National "
                    "Research). Ottawa/Kent 2024–2029; Allegan/Muskegon 2022–2027.")
 
-        st.markdown("##### ACS demographics & affordability — submarkets + counties")
-        table_cols = ["label", "tier", "demand_score", "median_hh_income",
-                      "max_affordable_rent", "median_gross_rent",
-                      "rental_vacancy_rate", "cost_burden_pct", "renter_share_pct",
-                      "occupancy_pct", "pop_growth_pct", "median_age", "population"]
-        money_fmt = "${:,.0f}"
-        st.dataframe(df[table_cols].style.format({
-            "median_hh_income": money_fmt, "max_affordable_rent": money_fmt,
-            "median_gross_rent": money_fmt, "population": "{:,.0f}",
-            "demand_score": "{:.1f}", "rental_vacancy_rate": "{:.1f}%",
-            "cost_burden_pct": "{:.1f}%", "renter_share_pct": "{:.1f}%",
-            "occupancy_pct": "{:.1f}%", "pop_growth_pct": "{:+.1f}%",
-            "median_age": "{:.0f}"}, na_rep="—"),
-            use_container_width=True, hide_index=True)
+        st.markdown("##### ACS demographics & affordability — by county")
+        st.dataframe(_acs_table(df[df["tier"] == "county"], "County"),
+                     use_container_width=True, hide_index=True)
+        st.caption("Expand a county below to break it out into its cities & townships.")
 
-        flagged = df[df.get("rental_vacancy_unreliable") == True]  # noqa: E712
-        if not flagged.empty:
-            notes = "; ".join(
-                f"{r['label']} {r['rental_vacancy_rate']:.1f}%"
-                + (f" ±{r['rental_vacancy_moe']:.1f}" if r.get("rental_vacancy_moe") is not None else "")
-                for _, r in flagged.iterrows())
-            st.caption(f"\\* Rental vacancy rate unreliable (ACS margin of error ≥ "
-                       f"estimate): {notes}. Small-sample artifact — read as "
-                       f"*approximate*, not exact.")
+        for c_key, c_label in zip(county_keys, county_labels):
+            sub = (muni[muni["county_key"] == c_key]
+                   .sort_values("demand_score", ascending=False))
+            with st.expander(f"{c_label} — {len(sub)} municipalities"):
+                st.dataframe(_acs_table(sub, "Municipality"),
+                             use_container_width=True, hide_index=True)
+                st.caption("Ranked by demand score. Small rural townships have "
+                           "noisier ACS estimates (esp. rental vacancy) — read "
+                           "those as approximate.")
+
+        st.divider()
+        _render_econ_dev(county_keys, county_labels)
 
     st.session_state.submarket = sel_label
     st.success(f"Selected submarket **{sel_label}** will carry into the Land "

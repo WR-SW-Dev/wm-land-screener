@@ -49,3 +49,6 @@ Thumbs.db
 
 # ── Utility map PDFs (large binaries; source for water/sewer extraction) ────────
 data/utility_pdfs/
+
+# Economic-development review queue — per-environment curated state
+data/econ_dev_queue.json

@@ -31,10 +31,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import ROOT, MARKET_COUNTIES  # noqa: E402
 
 _QUEUE = ROOT / "data" / "econ_dev_queue.json"
+_META  = ROOT / "data" / "econ_dev_meta.json"
 
-# Only surface reasonably recent announcements so each scan stays focused on new
-# activity rather than months of Google News history.
-_DAYS_BACK = 60
+# Scan window logic:
+#   • First scan (no prior scan recorded) → CATCH-UP: pull as much history as
+#     Google News exposes (capped by the 365-day filter; RSS itself favors recent
+#     + notable, so this grabs the available backlog, not a guaranteed archive).
+#   • Later scans → INCREMENTAL: only items published since the last scan, minus
+#     a small overlap so late-indexed articles aren't missed. The queue's per-item
+#     dedup then ensures nothing already seen is re-added.
+_CATCHUP_DAYS = 365
+_OVERLAP_DAYS = 3
 
 # Google News query keywords (broad net; the signal filter + human review refine).
 _KEYWORDS = ('"new jobs" OR expansion OR investment OR headquarters OR '
@@ -69,10 +76,9 @@ def _parse_date(s: str):
         return None
 
 
-def scan_candidates() -> dict:
-    """One Google-News query per county; return {id: record} of relevant hits."""
+def scan_candidates(cutoff) -> dict:
+    """One Google-News query per county; return {id: record} of hits newer than `cutoff`."""
     seen = {}
-    cutoff = datetime.now(timezone.utc) - timedelta(days=_DAYS_BACK)
     for c in MARKET_COUNTIES:
         label = c["label"]                           # e.g. "Ottawa County"
         query = f'{_KEYWORDS} "{label}" Michigan'
@@ -113,21 +119,61 @@ def load_queue() -> dict:
 
 def _save_queue(q: dict):
     _QUEUE.parent.mkdir(parents=True, exist_ok=True)
+    # Keep a one-version backup before overwriting, so analyst-entered details
+    # (employer/jobs/investment/city) can be recovered if a save goes wrong.
+    if _QUEUE.exists():
+        try:
+            _QUEUE.with_suffix(".bak.json").write_text(_QUEUE.read_text())
+        except Exception:                            # noqa: BLE001
+            pass
     _QUEUE.write_text(json.dumps(q, indent=2))
 
 
-def run_scan() -> tuple[int, int]:
-    """Fetch candidates, add NEW ones as pending. Returns (new_count, pending_count)."""
+def _load_meta() -> dict:
+    if _META.exists():
+        return json.loads(_META.read_text())
+    return {}
+
+
+def _save_meta(m: dict):
+    _META.parent.mkdir(parents=True, exist_ok=True)
+    _META.write_text(json.dumps(m, indent=2))
+
+
+def last_scan_ts():
+    """ISO timestamp of the previous scan, or None if never scanned."""
+    return _load_meta().get("last_scan_ts")
+
+
+def _scan_cutoff():
+    """(cutoff_datetime, is_catchup) — incremental since last scan, else catch-up."""
+    now = datetime.now(timezone.utc)
+    last = last_scan_ts()
+    if last:
+        try:
+            return datetime.fromisoformat(last) - timedelta(days=_OVERLAP_DAYS), False
+        except Exception:                            # noqa: BLE001
+            pass
+    return now - timedelta(days=_CATCHUP_DAYS), True
+
+
+def run_scan() -> tuple[int, int, bool]:
+    """
+    Fetch candidates and add NEW ones as pending. First run = catch-up (history);
+    later runs = only items since the last scan. Returns (new, pending, is_catchup).
+    """
+    cutoff, is_catchup = _scan_cutoff()
     q = load_queue()
     new = 0
-    for iid, rec in scan_candidates().items():
+    for iid, rec in scan_candidates(cutoff).items():
         if iid not in q:                             # never re-surface a decided item
             rec["status"] = "pending"
             q[iid] = rec
             new += 1
     _save_queue(q)
+    _save_meta({"last_scan_ts": datetime.now(timezone.utc).isoformat()})
     pending = sum(1 for v in q.values() if v.get("status") == "pending")
-    return new, pending
+    return new, pending, is_catchup
 
 
 def set_status(iid: str, status: str):
@@ -150,6 +196,31 @@ def update_record(iid: str, **fields):
         if k in DETAIL_FIELDS:
             q[iid][k] = v
     _save_queue(q)
+
+
+def add_manual(url: str, county_key: str, county_label: str,
+               title: str = None, source: str = None) -> tuple[str, bool]:
+    """
+    Manually add an announcement the scanner missed. Lands directly in the kept
+    items (status='approved') so it shows in the editable table to fill in.
+    Returns (id, added) — added=False if it was already present.
+    """
+    parsed = urllib.parse.urlparse(url)
+    if not title:
+        slug = parsed.path.rstrip("/").split("/")[-1]
+        title = slug.replace("-", " ").strip().title() or url
+    if not source:
+        source = parsed.netloc.replace("www.", "")
+    iid = _norm_id(title + url)
+    q = load_queue()
+    if iid in q:
+        return iid, False
+    q[iid] = {"id": iid, "title": title, "link": url, "source": source,
+              "published": "", "published_ts": "",
+              "county_key": county_key, "county_label": county_label,
+              "status": "approved", "manual": True}
+    _save_queue(q)
+    return iid, True
 
 
 def summary_by_county() -> dict:
@@ -177,8 +248,8 @@ def summary_by_county() -> dict:
 
 
 if __name__ == "__main__":
-    new, pending = run_scan()
-    print(f"{new} new; {pending} pending")
+    new, pending, catchup = run_scan()
+    print(f"{new} new; {pending} pending (catch-up={catchup})")
     q = load_queue()
     print(f"{pending} pending after scan (total tracked: {len(q)})")
     for v in sorted(q.values(), key=lambda r: r.get("published_ts", ""), reverse=True)[:12]:

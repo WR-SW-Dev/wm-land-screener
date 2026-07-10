@@ -51,4 +51,4 @@ Thumbs.db
 data/utility_pdfs/
 
 # Economic-development review queue — per-environment curated state
-data/econ_dev_queue.json
+data/econ_dev_*.json

@@ -25,7 +25,24 @@ so it deploys with the code — no separate copy needed.
 
 ## Steps
 
-### 1. Copy the credentials file up (run from your LOCAL machine)
+### 1. Make sure `credentials.yaml` on the server has the logins AND the Census key
+The server's `credentials.yaml` (gitignored, never in the repo) must contain the
+existing login block **and** a new `census:` block — the market-feasibility
+features read the Census API key from here. The prior setup predates this key, so
+it likely needs adding:
+
+```yaml
+census:
+  api_key: <ASK SADIE FOR THE KEY — not stored in git>
+credentials:
+  usernames:
+    ...        # existing logins (unchanged)
+cookie:
+  ...          # existing cookie block (unchanged)
+```
+
+Either add the `census:` block to the server's existing file, **or** copy the
+current working local file up (it already has logins + key):
 ```bash
 scp credentials.yaml ubuntu@44.213.16.32:/home/ubuntu/wm-land-screener/credentials.yaml
 ```

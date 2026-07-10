@@ -50,5 +50,8 @@ Thumbs.db
 # ── Utility map PDFs (large binaries; source for water/sewer extraction) ────────
 data/utility_pdfs/
 
-# Economic-development review queue — per-environment curated state
-data/econ_dev_*.json
+# Economic-development review queue.
+# The queue + scan-meta ARE tracked so the analyst's curated data deploys to the
+# live site (curate locally → push/deploy to publish; don't edit econ-dev on
+# live or the next deploy overwrites it). Only the local rolling backup is excluded.
+data/econ_dev_queue.bak.json

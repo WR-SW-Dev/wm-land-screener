@@ -26,6 +26,7 @@ from market.market_scoring import add_demand_score
 from market.boundaries import load_boundaries, load_municipal_boundaries
 from market.housing_needs import load_housing_needs
 from market import econ_dev
+from market import competition
 import config
 from config import DEMAND_WEIGHTS
 
@@ -278,6 +279,120 @@ def _render_pins_summary(pins):
         unsafe_allow_html=True)
 
 
+# ── Competition-mapping pins (competing residential/BTR projects) ──────────────
+# Marker color by stage — a light-to-dark progression mirrors "how far along"
+# the project is (matches the teal intensity ramp used in data-review tooling).
+# Available folium/AwesomeMarkers colors only, so this approximates the ramp.
+_STAGE_PIN_COLOR = {
+    "proposed": "lightblue",
+    "planned": "cadetblue",
+    "under_construction": "blue",
+    "lease_up": "darkblue",
+    "existing": "black",
+}
+
+
+def competition_pins(muni_bounds):
+    """
+    Locations for approved competition-mapping records. Geocodes the real
+    street address via competition.geocode_address() when possible; falls
+    back to the submarket's municipal-center point (same label-matching
+    approach as econ_pins) when the address is missing or won't geocode.
+    """
+    ottawa_munis = [f for f in muni_bounds["features"]
+                    if f["properties"].get("county_key") == "ottawa"]
+    fallback_center = {}
+    for f in ottawa_munis:
+        lbl = (f["properties"].get("label") or "").lower()
+        if lbl:
+            fallback_center[lbl] = _feature_center(f)
+
+    pins = []
+    for v in competition.load_queue().values():
+        if v.get("status") != "approved":
+            continue
+        addr = (v.get("address") or "").strip()
+        sm_label = v.get("submarket_label") or ""
+        loc = competition.geocode_address(addr, sm_label) if addr else None
+        if loc is None:
+            sm_lower = sm_label.lower()
+            for lbl, center in fallback_center.items():
+                if sm_lower and (sm_lower in lbl or lbl.split(" ")[0] in sm_lower):
+                    loc = center
+                    break
+        if loc is None:
+            continue
+        pins.append({
+            "lat": loc[0], "lon": loc[1],
+            "label": v.get("project_name") or v.get("title", "")[:40] or "Untitled project",
+            "stage": v.get("stage", competition.DEFAULT_STAGE),
+            "is_direct_competitor": bool(v.get("is_direct_competitor")),
+            "total_units": v.get("total_units"),
+            "builder": v.get("builder") or "",
+            "address": addr,
+            "link": v.get("link") or "",
+        })
+    return pins
+
+
+def _add_competition_pins(m, pins):
+    """Drop pins for competing projects, colored by stage; a star marks the
+    named direct competitor (Allen Edwin/CopperBay) instead of the generic
+    home icon."""
+    for p in pins:
+        color = _STAGE_PIN_COLOR.get(p["stage"], _STAGE_PIN_COLOR["proposed"])
+        icon_name = "star" if p["is_direct_competitor"] else "home"
+        units = p.get("total_units")
+        stage_label = competition.STAGES.get(p["stage"], p["stage"])
+        popup = (f"<b>{p['label']}</b><br>"
+                 f"{stage_label}<br>"
+                 + (f"{units} units<br>" if units not in (None, "") else "")
+                 + (f"Builder: {p['builder']}<br>" if p.get("builder") else "")
+                 + (f"{p['address']}<br>" if p.get("address") else "")
+                 + (f'<a href="{p["link"]}" target="_blank">Read article →</a>'
+                    if p.get("link") else ""))
+        folium.Marker(
+            [p["lat"], p["lon"]],
+            icon=folium.Icon(color=color, icon=icon_name, prefix="fa"),
+            tooltip=p["label"],
+            popup=folium.Popup(popup, max_width=260),
+        ).add_to(m)
+
+
+def _render_competition_summary(pins):
+    """Summary box: total projects, stage breakdown, and a direct-competitor
+    (Allen Edwin/CopperBay) callout — colored consistently with the heat map
+    (this is informational, not a need/opportunity signal, so it stays neutral)."""
+    if not pins:
+        st.caption("No competition-mapping projects to pin yet — approve items "
+                   "in the Analyst view, or check that addresses are filled in.")
+        return
+    by_stage = {k: 0 for k in competition.STAGES}
+    units_by_stage = {k: 0 for k in competition.STAGES}
+    for p in pins:
+        by_stage[p["stage"]] = by_stage.get(p["stage"], 0) + 1
+        units = p.get("total_units")
+        if isinstance(units, (int, float)) and units == units:
+            units_by_stage[p["stage"]] = units_by_stage.get(p["stage"], 0) + units
+    direct = sum(1 for p in pins if p["is_direct_competitor"])
+
+    def _stage_txt(k, label):
+        n, u = by_stage[k], units_by_stage[k]
+        unit_part = f" ({int(u):,} units)" if u else ""
+        return f"{n} {label}{unit_part}"
+
+    stage_txt = " &nbsp;·&nbsp; ".join(
+        _stage_txt(k, v) for k, v in competition.STAGES.items() if by_stage[k])
+    direct_txt = (f' &nbsp;·&nbsp; <b style="color:#8a4a17;">★ {direct} direct '
+                  f'competitor project(s)</b>' if direct else "")
+    st.markdown(
+        f'<div style="background:#f5f6f4;border-left:5px solid #5a8a8c;'
+        f'border-radius:8px;padding:10px 14px;margin:2px 0 10px 0;">'
+        f'<span style="color:#2c3e3f;font-weight:700;">🏘️ Competition pipeline</span>'
+        f'&nbsp;—&nbsp; {len(pins)} project(s) &nbsp;·&nbsp; {stage_txt}{direct_txt}</div>',
+        unsafe_allow_html=True)
+
+
 # ── County heat map (PRIMARY) ──────────────────────────────────────────────────
 def _build_county_map(bounds, needs, value_col, caption, pins=None):
     """Choropleth of the four counties shaded by the chosen units-needed metric."""
@@ -416,7 +531,7 @@ def _bbox_of_features(features):
     return [[min(ys), min(xs)], [max(ys), max(xs)]]
 
 
-def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None):
+def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None, competition_pins_list=None):
     """Choropleth of one county's municipalities, shaded by demand score, zoomed in."""
     feats = [f for f in muni_bounds["features"]
              if f["properties"].get("county_key") == county_key]
@@ -449,6 +564,8 @@ def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None):
     _DEMAND_CMAP.add_to(m)
     if pins:
         _add_pins(m, pins)
+    if competition_pins_list:
+        _add_competition_pins(m, competition_pins_list)
     return m
 
 
@@ -470,7 +587,8 @@ def _render_place_detail(row):
                 st.caption(help_txt)
 
 
-def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=None):
+def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=None,
+                           competition_pins_list=None):
     """Municipal demand-score heat map for one county + selected-place detail."""
     muni = muni_df[muni_df["county_key"] == county_key].reset_index(drop=True)
     if muni.empty:
@@ -481,7 +599,8 @@ def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=
                "city/township to drill in. Small rural townships have noisier ACS "
                "estimates — read their scores as approximate.")
 
-    map_out = st_folium(_build_municipal_map(muni_bounds, muni, county_key, pins=pins),
+    map_out = st_folium(_build_municipal_map(muni_bounds, muni, county_key, pins=pins,
+                                             competition_pins_list=competition_pins_list),
                         height=420, use_container_width=True,
                         key=f"muni_map_{county_key}",
                         returned_objects=["last_active_drawing"])
@@ -693,6 +812,169 @@ def _render_econ_dev(county_keys, county_labels):
                 city=(row["City"] or ""), notes=(row["Notes"] or ""))
 
 
+def _safe_num(v):
+    """Best-effort numeric conversion for fields that are USUALLY numbers but
+    sometimes free text in the historical data ("6+", "TBD", "-" for acres/
+    units) — keeps the original text rather than crashing the save on rerun."""
+    if pd.isna(v) or v == "":
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return v
+
+
+# ── Competition mapping — on-demand scan + review inbox ─────────────────────────
+def _render_competition():
+    st.markdown("##### Competition mapping")
+    submarket_labels = [sm["label"] for sm in config.MARKET_SUBMARKETS]
+    submarket_keys = [sm["key"] for sm in config.MARKET_SUBMARKETS]
+    last = competition.last_scan_ts()
+    when = f"last scan {last[:10]}" if last else "no scan yet — first run pulls history"
+    st.caption("Scan for competing residential/BTR development projects in Grand "
+               "Haven, Grand Haven Twp, and Spring Lake Twp. Allen Edwin (builder of "
+               "CopperBay, WR-Dev's only direct BTR competitor in Ottawa County) is "
+               "searched by name — bare \"CopperBay\" isn't, since it collides with "
+               "an unrelated drink brand; add CopperBay-specific coverage manually "
+               f"below.  _({when})_")
+
+    scan_col, add_col = st.columns([1, 1])
+    if scan_col.button("🔎 Scan now", key="competition_scan"):
+        with st.spinner("Scanning for competing development projects…"):
+            try:
+                new, pending, catchup = competition.run_scan()
+                kind = "History catch-up" if catchup else "Scan"
+                st.success(f"{kind} complete — {new} new item(s); {pending} pending review.")
+            except Exception as e:                   # noqa: BLE001
+                st.error(f"Scan failed: {e}")
+
+    with add_col.popover("➕ Add a link manually"):
+        st.caption("For CopperBay/Allen Edwin coverage or anything else the "
+                   "scanner missed. Added straight to your kept items to fill in.")
+        m_url = st.text_input("Article URL", key="comp_manual_url")
+        m_title = st.text_input("Headline (optional)", key="comp_manual_title")
+        m_submarket = st.selectbox("Submarket", submarket_labels, key="comp_manual_submarket")
+        stage_labels = list(competition.STAGES.values())
+        stage_by_label = {v: k for k, v in competition.STAGES.items()}
+        m_stage = st.selectbox("Stage", stage_labels, key="comp_manual_stage")
+        if st.button("Add to kept items", key="comp_manual_add"):
+            if m_url.strip():
+                sk = submarket_keys[submarket_labels.index(m_submarket)]
+                _, added = competition.add_manual(
+                    m_url.strip(), sk, m_submarket, title=(m_title.strip() or None),
+                    stage=stage_by_label[m_stage])
+                st.success("Added — fill in its details below." if added
+                           else "That link is already in the list.")
+            else:
+                st.warning("Enter a URL first.")
+
+    queue = competition.load_queue()
+    if not queue:
+        st.info("No scans yet — click **Scan now** to pull recent announcements.")
+        return
+
+    label_by_key = dict(zip(submarket_keys, submarket_labels))
+    pending = [v for v in queue.values() if v.get("status") == "pending"]
+    approved = [v for v in queue.values() if v.get("status") == "approved"]
+
+    def _by_submarket(records, key):
+        return sorted([r for r in records if r["submarket_key"] == key],
+                      key=lambda r: r.get("published_ts", ""), reverse=True)
+
+    st.markdown(f"**Review inbox — {len(pending)} pending**")
+    if not pending:
+        st.caption("Nothing pending — all caught up. ✅")
+    for sk in submarket_keys:
+        items = _by_submarket(pending, sk)
+        if not items:
+            continue
+        st.markdown(f"**{label_by_key.get(sk, sk)}** ({len(items)})")
+        for r in items:
+            col, keep, skip = st.columns([7, 1, 1])
+            date = (r.get("published", "") or "")[:16]
+            stage_label = competition.STAGES.get(r.get("stage", competition.DEFAULT_STAGE),
+                                                 "Proposed")
+            flag = " · ★ direct competitor" if r.get("is_direct_competitor") else ""
+            col.markdown(f"[{r['title']}]({r['link']})  \n"
+                         f"<small>{r.get('source','')} · {date} · {stage_label}{flag}</small>",
+                         unsafe_allow_html=True)
+            keep.button("✓ Keep", key=f"ckeep_{r['id']}",
+                        on_click=competition.set_status, args=(r["id"], "approved"))
+            skip.button("✕ Skip", key=f"cskip_{r['id']}",
+                        on_click=competition.set_status, args=(r["id"], "rejected"))
+
+    if approved:
+        st.markdown(f"**Kept items — competing projects ({len(approved)})**")
+        st.caption("Wrong stage from the scan? Fix it in the **Stage** column — "
+                   "the map pin updates to match. Tick **Send back** to return an "
+                   "item to the review inbox.")
+        stage_labels = list(competition.STAGES.values())
+        stage_by_label = {v: k for k, v in competition.STAGES.items()}
+        rows = []
+        for r in sorted(approved, key=lambda x: (x["submarket_label"],
+                                                 x.get("published_ts", ""))):
+            stage_label = competition.STAGES.get(r.get("stage", competition.DEFAULT_STAGE),
+                                                 stage_labels[0])
+            rows.append({
+                "id": r["id"], "Submarket": r["submarket_label"],
+                "Direct competitor": bool(r.get("is_direct_competitor")),
+                "Stage": stage_label,
+                "Project": r.get("project_name", "") or "",
+                "Address": r.get("address", "") or "",
+                "Type": r.get("type", "") or "",
+                "Units": r.get("total_units"),
+                "Builder": r.get("builder", "") or "",
+                "Acres": r.get("acres"),
+                "Approved on": r.get("approved_on", "") or "",
+                "Constr. start": r.get("construction_start", "") or "",
+                "Constr. end": r.get("construction_end", "") or "",
+                "Article": r["link"], "Headline": r["title"],
+                "Notes": r.get("notes", "") or "", "Send back": False,
+            })
+        edited = st.data_editor(
+            pd.DataFrame(rows), key="competition_editor", hide_index=True,
+            use_container_width=True,
+            column_config={
+                "id": None,
+                "Submarket": st.column_config.TextColumn(disabled=True, width="small"),
+                "Direct competitor": st.column_config.CheckboxColumn(
+                    width="small", help="Allen Edwin / CopperBay"),
+                "Stage": st.column_config.SelectboxColumn(options=stage_labels, width="small"),
+                "Project": st.column_config.TextColumn(width="medium"),
+                "Address": st.column_config.TextColumn(width="medium"),
+                "Type": st.column_config.TextColumn(width="small"),
+                "Units": st.column_config.NumberColumn(format="%d", min_value=0),
+                "Builder": st.column_config.TextColumn(width="small"),
+                "Acres": st.column_config.NumberColumn(format="%.1f", min_value=0),
+                "Approved on": st.column_config.TextColumn(width="small"),
+                "Constr. start": st.column_config.TextColumn(width="small"),
+                "Constr. end": st.column_config.TextColumn(width="small"),
+                "Article": st.column_config.LinkColumn("Article", display_text="Read →",
+                                                       disabled=True, width="small"),
+                "Headline": st.column_config.TextColumn(disabled=True, width="medium"),
+                "Notes": st.column_config.TextColumn(width="medium"),
+                "Send back": st.column_config.CheckboxColumn(width="small"),
+            },
+        )
+        for _, row in edited.iterrows():
+            if row["Send back"]:
+                competition.set_status(row["id"], "pending")
+                continue
+            competition.update_record(
+                row["id"],
+                stage=stage_by_label.get(row["Stage"], competition.DEFAULT_STAGE),
+                is_direct_competitor=bool(row["Direct competitor"]),
+                project_name=(row["Project"] or ""), address=(row["Address"] or ""),
+                type=(row["Type"] or ""),
+                total_units=_safe_num(row["Units"]),
+                builder=(row["Builder"] or ""),
+                acres=_safe_num(row["Acres"]),
+                approved_on=(row["Approved on"] or ""),
+                construction_start=(row["Constr. start"] or ""),
+                construction_end=(row["Constr. end"] or ""),
+                notes=(row["Notes"] or ""))
+
+
 # ── Main entry ─────────────────────────────────────────────────────────────────
 def render_market(view: str, on_continue):
     st.subheader("1. Market Feasibility")
@@ -770,10 +1052,23 @@ def render_market(view: str, on_continue):
             if show_pins:
                 _render_pins_summary(pins)
 
+            show_competition = st.checkbox(
+                "Show competition pins", key=f"competition_pins_{county_key}",
+                help="Overlay kept competing-development projects for Grand Haven / "
+                     "Grand Haven Twp / Spring Lake Twp, colored by stage — a star "
+                     "marks Allen Edwin/CopperBay, WR-Dev's direct BTR competitor.")
+            if show_competition:
+                with st.spinner("Geocoding project addresses…"):
+                    comp_pins = competition_pins(muni_bounds)
+                _render_competition_summary(comp_pins)
+            else:
+                comp_pins = None
+
             # Municipal heat map goes FIRST — same spot the county map occupied,
             # so zooming in feels continuous rather than making the map "vanish".
             picked = _render_municipalities(county_key, sel_county_label,
-                                            muni, muni_bounds, pins=pins)
+                                            muni, muni_bounds, pins=pins,
+                                            competition_pins_list=comp_pins)
             if picked:
                 sel_label = picked
 
@@ -818,11 +1113,14 @@ def render_market(view: str, on_continue):
         if config.IS_LOCAL:
             st.divider()
             _render_econ_dev(county_keys, county_labels)
+            st.divider()
+            _render_competition()
         else:
             st.divider()
-            st.caption("Economic-development scanning & curation is done locally "
-                       "by the analyst — the Executive view's pins and summary "
-                       "already reflect the latest curated data.")
+            st.caption("Economic-development and competition-mapping scanning & "
+                       "curation is done locally by the analyst — the Executive "
+                       "view's pins and summaries already reflect the latest "
+                       "curated data.")
 
     st.session_state.submarket = sel_label
     st.success(f"Selected submarket **{sel_label}** will carry into the Land "

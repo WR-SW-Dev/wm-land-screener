@@ -55,3 +55,10 @@ data/utility_pdfs/
 # live site (curate locally → push/deploy to publish; don't edit econ-dev on
 # live or the next deploy overwrites it). Only the local rolling backup is excluded.
 data/econ_dev_queue.bak.json
+
+# Competition-mapping review queue — same pattern as econ-dev above: queue +
+# scan-meta are tracked so curated data deploys; only the rolling backup is
+# excluded. The geocode cache is excluded too — it's fully re-derivable (free
+# Census Geocoder lookups), same reasoning as data/raw/ above.
+data/competition_queue.bak.json
+data/competition_geocode_cache.json

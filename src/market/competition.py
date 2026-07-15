@@ -289,10 +289,15 @@ def set_status(iid: str, status: str):
 # commission or board approval — an earlier lifecycle milestone than
 # construction_start, and the most reliable signal for the proposed-vs-planned
 # split when it's known (vs. guessing from free text via classify_stage()).
+#
+# effective_rent/occupancy_pct/avg_sqft/year_built are for EXISTING/lease-up
+# comps (e.g. from RealPage Explore) — a stabilized or lease-up property has
+# performance data instead of a construction timeline.
 DETAIL_FIELDS = ("project_name", "address", "stage", "type", "total_units",
                   "approved_on", "construction_start", "construction_end",
                   "builder", "parcel_number", "acres", "notes",
-                  "is_direct_competitor")
+                  "is_direct_competitor", "effective_rent", "occupancy_pct",
+                  "avg_sqft", "year_built")
 
 
 def update_record(iid: str, **fields):
@@ -332,6 +337,35 @@ def add_manual(url: str, submarket_key: str, submarket_label: str,
               "stage": stage if stage in STAGES else DEFAULT_STAGE,
               "is_direct_competitor": False,
               "status": "approved", "manual": True}
+    _save_queue(q)
+    return iid, True
+
+
+def add_existing_property(project_name: str, submarket_key: str, submarket_label: str,
+                          address: str = "", stage: str = "existing",
+                          **detail_fields) -> tuple[str, bool]:
+    """
+    Add an existing/lease-up comp (e.g. from RealPage Explore) directly — no
+    source URL, since these are property records, not news articles. Lands
+    straight in the kept items (status='approved') so it shows in the
+    editable table. detail_fields: any of DETAIL_FIELDS (effective_rent,
+    occupancy_pct, avg_sqft, year_built, total_units, type, notes, ...).
+    Returns (id, added) — added=False if it was already present.
+    """
+    iid = _norm_id(f"property|{project_name}|{address}")
+    q = load_queue()
+    if iid in q:
+        return iid, False
+    rec = {"id": iid, "title": project_name, "link": "", "source": "RealPage Explore",
+           "published": "", "published_ts": "",
+           "submarket_key": submarket_key, "submarket_label": submarket_label,
+           "stage": stage if stage in STAGES else DEFAULT_STAGE,
+           "is_direct_competitor": False, "status": "approved", "manual": True,
+           "project_name": project_name, "address": address}
+    for k, v in detail_fields.items():
+        if k in DETAIL_FIELDS:
+            rec[k] = v
+    q[iid] = rec
     _save_queue(q)
     return iid, True
 

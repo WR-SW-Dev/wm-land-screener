@@ -15,6 +15,8 @@ Executive view is two tiers:
 Public API:
     render_market(view: str, on_continue) -> None
 """
+import hashlib
+
 import pandas as pd
 import streamlit as st
 import folium
@@ -331,6 +333,10 @@ def competition_pins(muni_bounds):
             "builder": v.get("builder") or "",
             "address": addr,
             "link": v.get("link") or "",
+            "effective_rent": v.get("effective_rent"),
+            "occupancy_pct": v.get("occupancy_pct"),
+            "avg_sqft": v.get("avg_sqft"),
+            "year_built": v.get("year_built"),
         })
     return pins
 
@@ -344,9 +350,17 @@ def _add_competition_pins(m, pins):
         icon_name = "star" if p["is_direct_competitor"] else "home"
         units = p.get("total_units")
         stage_label = competition.STAGES.get(p["stage"], p["stage"])
+        rent = p.get("effective_rent")
+        occ = p.get("occupancy_pct")
+        sqft = p.get("avg_sqft")
+        year = p.get("year_built")
         popup = (f"<b>{p['label']}</b><br>"
                  f"{stage_label}<br>"
                  + (f"{units} units<br>" if units not in (None, "") else "")
+                 + (f"Effective rent: ${rent:,.0f}/mo<br>" if rent not in (None, "") else "")
+                 + (f"Occupancy: {occ:.1f}%<br>" if occ not in (None, "") else "")
+                 + (f"Avg {sqft:,.0f} sq ft<br>" if sqft not in (None, "") else "")
+                 + (f"Built {int(year)}<br>" if year not in (None, "") else "")
                  + (f"Builder: {p['builder']}<br>" if p.get("builder") else "")
                  + (f"{p['address']}<br>" if p.get("address") else "")
                  + (f'<a href="{p["link"]}" target="_blank">Read article →</a>'
@@ -730,8 +744,8 @@ def _render_econ_dev(county_keys, county_labels):
                 "Notes": r.get("notes", "") or "", "Send back": False,
             })
         edited = st.data_editor(
-            pd.DataFrame(rows), key="econ_editor", hide_index=True,
-            use_container_width=True,
+            pd.DataFrame(rows), key=_editor_key("econ_editor", approved_employer),
+            hide_index=True, use_container_width=True,
             column_config={
                 "id": None,
                 "County": st.column_config.TextColumn(disabled=True, width="small"),
@@ -781,8 +795,8 @@ def _render_econ_dev(county_keys, county_labels):
                 "Notes": r.get("notes", "") or "", "Send back": False,
             })
         edited_market = st.data_editor(
-            pd.DataFrame(rows), key="econ_editor_market", hide_index=True,
-            use_container_width=True,
+            pd.DataFrame(rows), key=_editor_key("econ_editor_market", approved_market),
+            hide_index=True, use_container_width=True,
             column_config={
                 "id": None,
                 "County": st.column_config.TextColumn(disabled=True, width="small"),
@@ -824,6 +838,18 @@ def _safe_num(v):
         return v
 
 
+def _editor_key(prefix, records):
+    """Stable st.data_editor key derived from the exact SET of row ids being
+    shown. A fixed key makes Streamlit reconcile edits by row POSITION across
+    reruns — if a row gets added/removed from outside the editor (e.g. the
+    "Add existing property" popover), the stale position-based state can get
+    misaligned with the new rows, and the save loop then writes one record's
+    edited values onto a DIFFERENT record's id. Changing the key whenever the
+    id set changes forces a fresh widget instead, avoiding that corruption."""
+    sig = hashlib.md5("|".join(sorted(r["id"] for r in records)).encode()).hexdigest()[:10]
+    return f"{prefix}_{len(records)}_{sig}"
+
+
 # ── Competition mapping — on-demand scan + review inbox ─────────────────────────
 def _render_competition():
     st.markdown("##### Competition mapping")
@@ -838,7 +864,7 @@ def _render_competition():
                "an unrelated drink brand; add CopperBay-specific coverage manually "
                f"below.  _({when})_")
 
-    scan_col, add_col = st.columns([1, 1])
+    scan_col, add_col, existing_col = st.columns([1, 1, 1])
     if scan_col.button("🔎 Scan now", key="competition_scan"):
         with st.spinner("Scanning for competing development projects…"):
             try:
@@ -867,6 +893,37 @@ def _render_competition():
                            else "That link is already in the list.")
             else:
                 st.warning("Enter a URL first.")
+
+    with existing_col.popover("➕ Add existing property"):
+        st.caption("For stabilized/lease-up comps from RealPage Explore or "
+                   "similar — no source link needed, just the property data.")
+        p_name = st.text_input("Property name", key="comp_prop_name")
+        p_address = st.text_input("Address", key="comp_prop_address")
+        p_submarket = st.selectbox("Submarket", submarket_labels, key="comp_prop_submarket")
+        p_stage_options = ["Existing", "Lease-up"]
+        p_stage_by_label = {"Existing": "existing", "Lease-up": "lease_up"}
+        p_stage = st.selectbox("Status", p_stage_options, key="comp_prop_stage")
+        p_units = st.number_input("Total units", min_value=0, step=1, key="comp_prop_units")
+        p_rent = st.number_input("Effective rent ($/mo)", min_value=0, step=1,
+                                 key="comp_prop_rent")
+        p_occ = st.number_input("Occupancy (%)", min_value=0.0, max_value=100.0,
+                                step=0.1, key="comp_prop_occ")
+        p_sqft = st.number_input("Avg sq ft", min_value=0, step=1, key="comp_prop_sqft")
+        p_year = st.number_input("Year built", min_value=1900, max_value=2100, step=1,
+                                 value=2000, key="comp_prop_year")
+        if st.button("Add to kept items", key="comp_prop_add"):
+            if p_name.strip():
+                sk = submarket_keys[submarket_labels.index(p_submarket)]
+                _, added = competition.add_existing_property(
+                    p_name.strip(), sk, p_submarket, address=p_address.strip(),
+                    stage=p_stage_by_label[p_stage],
+                    total_units=(int(p_units) or None), effective_rent=(p_rent or None),
+                    occupancy_pct=(p_occ or None), avg_sqft=(int(p_sqft) or None),
+                    year_built=(int(p_year) or None))
+                st.success("Added — fill in any remaining details below." if added
+                           else "That property is already in the list.")
+            else:
+                st.warning("Enter a property name first.")
 
     queue = competition.load_queue()
     if not queue:
@@ -925,6 +982,10 @@ def _render_competition():
                 "Units": r.get("total_units"),
                 "Builder": r.get("builder", "") or "",
                 "Acres": r.get("acres"),
+                "Effective rent": r.get("effective_rent"),
+                "Occupancy %": r.get("occupancy_pct"),
+                "Avg sq ft": r.get("avg_sqft"),
+                "Year built": r.get("year_built"),
                 "Approved on": r.get("approved_on", "") or "",
                 "Constr. start": r.get("construction_start", "") or "",
                 "Constr. end": r.get("construction_end", "") or "",
@@ -932,8 +993,8 @@ def _render_competition():
                 "Notes": r.get("notes", "") or "", "Send back": False,
             })
         edited = st.data_editor(
-            pd.DataFrame(rows), key="competition_editor", hide_index=True,
-            use_container_width=True,
+            pd.DataFrame(rows), key=_editor_key("competition_editor", approved),
+            hide_index=True, use_container_width=True,
             column_config={
                 "id": None,
                 "Submarket": st.column_config.TextColumn(disabled=True, width="small"),
@@ -946,6 +1007,12 @@ def _render_competition():
                 "Units": st.column_config.NumberColumn(format="%d", min_value=0),
                 "Builder": st.column_config.TextColumn(width="small"),
                 "Acres": st.column_config.NumberColumn(format="%.1f", min_value=0),
+                "Effective rent": st.column_config.NumberColumn(
+                    format="$%d", min_value=0, help="Effective rent per month"),
+                "Occupancy %": st.column_config.NumberColumn(
+                    format="%.1f%%", min_value=0, max_value=100),
+                "Avg sq ft": st.column_config.NumberColumn(format="%d", min_value=0),
+                "Year built": st.column_config.NumberColumn(format="%d", min_value=1900),
                 "Approved on": st.column_config.TextColumn(width="small"),
                 "Constr. start": st.column_config.TextColumn(width="small"),
                 "Constr. end": st.column_config.TextColumn(width="small"),
@@ -969,6 +1036,10 @@ def _render_competition():
                 total_units=_safe_num(row["Units"]),
                 builder=(row["Builder"] or ""),
                 acres=_safe_num(row["Acres"]),
+                effective_rent=_safe_num(row["Effective rent"]),
+                occupancy_pct=_safe_num(row["Occupancy %"]),
+                avg_sqft=_safe_num(row["Avg sq ft"]),
+                year_built=_safe_num(row["Year built"]),
                 approved_on=(row["Approved on"] or ""),
                 construction_start=(row["Constr. start"] or ""),
                 construction_end=(row["Constr. end"] or ""),

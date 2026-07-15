@@ -21,7 +21,11 @@
     "builder": "Reenders, Inc.",
     "notes": "Commmunity for adults with intellectual disabilities , shared amenities",
     "acres": null,
-    "approved_on": ""
+    "approved_on": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "7c6557d64538": {
     "id": "7c6557d64538",
@@ -45,7 +49,11 @@
     "builder": "Westwind Construction",
     "notes": "Replacing old dance studio - features studio, 1 bed and 2 bed apts., rooftop bar",
     "acres": null,
-    "approved_on": ""
+    "approved_on": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "807ff7f2e88b": {
     "id": "807ff7f2e88b",
@@ -69,7 +77,11 @@
     "builder": "IMD Holdings (developer)",
     "notes": "Amenities such as dog park, outdoor pool and sundeck, \npickleball courts, and community  lounge; located on\nunderutilized brownfield site; 3 phases  with SF, flats, townhomes, and row houses; Master Plan lists PD as a compatible zoning district; passed with conditions that need to be met including traffic study - working on preserving trees and wetlands.",
     "acres": null,
-    "approved_on": ""
+    "approved_on": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "68625411959b": {
     "id": "68625411959b",
@@ -93,7 +105,11 @@
     "builder": "Interra Homes",
     "notes": "3 available home sites, 3 under construction, 1 move-in ready, 62 sold, 3 not started - 2-4 beds, 2-3.5 baths, 2-3 car garage, 1,622+ sq ft., starting at $533,000 - contact for more info if wanted: https://jtbhomes.com/neighborhoods/stonewater/",
     "acres": null,
-    "approved_on": ""
+    "approved_on": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "6137bda700b1": {
     "id": "6137bda700b1",
@@ -104,7 +120,7 @@
     "published_ts": "",
     "submarket_key": "spring_lake_twp",
     "submarket_label": "Spring Lake Twp",
-    "stage": "under_construction",
+    "stage": "existing",
     "status": "approved",
     "historical": true,
     "is_direct_competitor": false,
@@ -117,7 +133,11 @@
     "builder": "Veneklasen Construction",
     "notes": "$10.6 million 3-story building. 10 studio apartments, 25 one-beds, one 2-beds, and 5 townhome units. Commercial space (2,711 sq ft)  will be occupied by a medical office.",
     "acres": null,
-    "approved_on": ""
+    "approved_on": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "fa7e8045ba9c": {
     "id": "fa7e8045ba9c",
@@ -142,7 +162,11 @@
     "builder": "",
     "notes": "Proposed zoning: PD - Planned\nDevelopment / Denny Dryer of Dryer Architectural submitted the request. Site plan\nwas amended and approved during the July 2025 meeting.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "d57b67dfbf00": {
     "id": "d57b67dfbf00",
@@ -167,7 +191,11 @@
     "builder": "",
     "notes": "Proposed zoning: PUD Amendment / March 16, 2026 meeting packet outlines this project. This project\nis comprosed of 224 apartments, 164 atatched townhomes, 17 \nsingle-detahced condo units, 16 two-attached condo units, and\n189 single-detahced dwellings on individually ownder parcels.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "41d6c5e6db40": {
     "id": "41d6c5e6db40",
@@ -192,7 +220,11 @@
     "builder": "",
     "notes": "Proposed zoning: Currently AG - \nno proposal to change / Paramount Development Corporation is the developer. Two-acre\nminimum lot size requirement. They're proposing seven single-\nfamily lots from 2.2 acres to 7.8 acres in size. There is an existing\nhome on theparcel that will remain. There are existing wetlands\nthat will be avoided",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "d370bd48faed": {
     "id": "d370bd48faed",
@@ -217,7 +249,11 @@
     "builder": "",
     "notes": "PUD proposed. 40 acres. Vacant land owned from the Loftis & \nReenders families. 87 single-family detahced homes and 36 \nsingle-fmaily townhomes. Detached homes sold at \"market rate\" \n& townhomes planned ot be more \"affordable\" sold for about\n$287,500 each.  Requesting TIF of about $1 million to assist with\ncost of extending municipal sewer to site. Township to review the \nPUD on March 2 Planning Commission meeting.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "bf7ed4b37fa8": {
     "id": "bf7ed4b37fa8",
@@ -242,7 +278,11 @@
     "builder": "",
     "notes": "Proposed zoning: - / Eastbrook Homes - 119 total planned units, Phase 1 planned \n36 lots at 2.3 units per acre, Phase 2 planned 45 lots at 2.1 units \nper acre, phase 3 planned 38 lots at 1.5 units per acre. 10-unit\nvilla condominium planned as well. Board of Trustees have approved the site plan. As of June, 2025, Eastbrook Homes was still in the permitting process.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "6dc496e7081a": {
     "id": "6dc496e7081a",
@@ -267,7 +307,11 @@
     "builder": "",
     "notes": "Eastbrook Homes - The Planning Commission and Board of Trustees have approved the site plan. As of June, 2025, Eastbrooks Homes was still in the permitting process.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "b5cb5faeec7e": {
     "id": "b5cb5faeec7e",
@@ -292,7 +336,11 @@
     "builder": "",
     "notes": "Previously approved by township board and recent amendment \nrequest to include different housing types. Originally planned\nfor 12 multi-unit-attached buildings consisting of 224 units, \n42 duplexes, and 10 lots for SF detached homes for a total of 276 units.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "2e347eacbc35": {
     "id": "2e347eacbc35",
@@ -317,7 +365,11 @@
     "builder": "",
     "notes": "Proposed 12 buildings - two 5-unit buildings, ten 4-unit buildings with attached one- or two-car garages and two- to three- bedroom floor plans.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "b449ead9a7a6": {
     "id": "b449ead9a7a6",
@@ -342,7 +394,11 @@
     "builder": "",
     "notes": "Redwood Living is the developer.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "0a5bca5dbcd1": {
     "id": "0a5bca5dbcd1",
@@ -367,7 +423,11 @@
     "builder": "",
     "notes": "Gary Smith is the developer.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "5687d32fd8de": {
     "id": "5687d32fd8de",
@@ -392,7 +452,11 @@
     "builder": "",
     "notes": "Motion to approve special land use and sit plan for residential\ndevelopment with Jorge Gonzalez as the presenter.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "0158f69b80b0": {
     "id": "0158f69b80b0",
@@ -417,7 +481,11 @@
     "builder": "",
     "notes": "Proposed zoning: PUD / Request submitted by Paramount Development Corporation, which is connected to Eastbrook Homes.",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "f3839423bf9b": {
     "id": "f3839423bf9b",
@@ -442,7 +510,11 @@
     "builder": "",
     "notes": "Proposed zoning: SCLU / 3 bed",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "a2a327f968dc": {
     "id": "a2a327f968dc",
@@ -467,7 +539,11 @@
     "builder": "",
     "notes": "Proposed zoning: SCLU / Efficiency units (120), 1 bed (22), and 2 bed (3), \nrequest to reduce number of parking spaces, mentioning of desire to use Brownfield Housing Tiff",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "5258186f8cc8": {
     "id": "5258186f8cc8",
@@ -492,7 +568,11 @@
     "builder": "",
     "notes": "Proposed zoning: PD / Amenities such as dog park, outdoor pool and sundeck, pickleball courts, and community  lounge; located on underutilized brownfield site; 3 phases  with SF, flats, townhomes, and row houses; Master Plan lists PD as a compatible zoning district; passed with conditions that need to be met including traffic study",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "6469c4ff08a5": {
     "id": "6469c4ff08a5",
@@ -517,7 +597,11 @@
     "builder": "",
     "notes": "Proposed zoning: -",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "450f67519466": {
     "id": "450f67519466",
@@ -542,7 +626,11 @@
     "builder": "",
     "notes": "Proposed zoning: R-1 / Based on Master Plan",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "63cea6d280fe": {
     "id": "63cea6d280fe",
@@ -567,7 +655,11 @@
     "builder": "",
     "notes": "Proposed zoning: PUD / Proposed housing types include SF detahced and rear \nloaded attached townhomes; a typical townhome likely to have 3 beds, 2.5 baths, and about 1,400 SF in floor area; mentioning of TIF for extension of public sewer",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "a496a354d106": {
     "id": "a496a354d106",
@@ -592,7 +684,11 @@
     "builder": "",
     "notes": "Proposed zoning: PUD",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "c1aa3a2a915d": {
     "id": "c1aa3a2a915d",
@@ -617,7 +713,11 @@
     "builder": "",
     "notes": "Proposed zoning: MDR",
     "construction_start": "",
-    "construction_end": ""
+    "construction_end": "",
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": null
   },
   "44a31d8d8b0c": {
     "id": "44a31d8d8b0c",
@@ -839,5 +939,257 @@
     "stage": "proposed",
     "is_direct_competitor": false,
     "status": "rejected"
+  },
+  "317acbc49f58": {
+    "id": "317acbc49f58",
+    "title": "Woodland Ridge",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "spring_lake_twp",
+    "submarket_label": "Spring Lake Twp",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Woodland Ridge",
+    "address": "18270 Woodland Ridge Dr, Spring Lake, MI 49456",
+    "total_units": 390.0,
+    "effective_rent": 1454.0,
+    "occupancy_pct": 97.4,
+    "avg_sqft": 997.0,
+    "year_built": 1999.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class C+, 388,872 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "73dba5129c32": {
+    "id": "73dba5129c32",
+    "title": "Haven at Grand Landing",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Haven at Grand Landing",
+    "address": "591 Miller Dr, Grand Haven, MI 49417",
+    "total_units": 168.0,
+    "effective_rent": 1628.0,
+    "occupancy_pct": 97.6,
+    "avg_sqft": 993.0,
+    "year_built": 2015.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class B, 166,868 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "287366feb4fb": {
+    "id": "287366feb4fb",
+    "title": "The Tribune Lofts",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "The Tribune Lofts",
+    "address": "101 N 3rd St, Grand Haven, MI 49417",
+    "total_units": 39.0,
+    "effective_rent": 1807.0,
+    "occupancy_pct": 97.4,
+    "avg_sqft": 791.0,
+    "year_built": 2023.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class A, 30,835 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "13dfccfd1a02": {
+    "id": "13dfccfd1a02",
+    "title": "Preserve Townhomes",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "spring_lake_twp",
+    "submarket_label": "Spring Lake Twp",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Preserve Townhomes",
+    "address": "14840 Cleveland St, Spring Lake, MI 49456",
+    "total_units": 42.0,
+    "effective_rent": 2221.0,
+    "occupancy_pct": 97.6,
+    "avg_sqft": 1429.0,
+    "year_built": 2020.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class B+, 60,038 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "2b6fb91321d4": {
+    "id": "2b6fb91321d4",
+    "title": "Lakeshore Flats",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Lakeshore Flats",
+    "address": "17003 Lakeshore Flats Dr, Grand Haven, MI 49417",
+    "total_units": 156.0,
+    "effective_rent": 1540.0,
+    "occupancy_pct": 97.4,
+    "avg_sqft": 861.0,
+    "year_built": 2020.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class B, 134,390 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "e07eea4d4edc": {
+    "id": "e07eea4d4edc",
+    "title": "Piper Lakes Apartment Homes",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Piper Lakes Apartment Homes",
+    "address": "14820 Piper Ln, Grand Haven, MI 49417",
+    "total_units": 202.0,
+    "effective_rent": 1522.0,
+    "occupancy_pct": 100.0,
+    "avg_sqft": 913.0,
+    "year_built": 2018.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class B, 184,329 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "bdac1a7ba35c": {
+    "id": "bdac1a7ba35c",
+    "title": "Timberview",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Timberview",
+    "address": "15056 Elizabeth Jean Ct, Grand Haven, MI 49417",
+    "total_units": 338.0,
+    "effective_rent": 1485.0,
+    "occupancy_pct": 97.0,
+    "avg_sqft": 1022.0,
+    "year_built": 2003.0,
+    "type": "MF",
+    "notes": "RealPage Explore, Class C+, 345,286 total sq ft",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": ""
+  },
+  "3ce9aa915c79": {
+    "id": "3ce9aa915c79",
+    "title": "Winsor Place",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "spring_lake_twp",
+    "submarket_label": "Spring Lake Twp",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Winsor Place",
+    "address": "106 S Buchanan St",
+    "total_units": 41.0,
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": 2026.0,
+    "type": "",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": "",
+    "notes": ""
+  },
+  "508c09142dc4": {
+    "id": "508c09142dc4",
+    "title": "Peerless",
+    "link": "",
+    "source": "RealPage Explore",
+    "published": "",
+    "published_ts": "",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "existing",
+    "is_direct_competitor": false,
+    "status": "approved",
+    "manual": true,
+    "project_name": "Peerless",
+    "address": "240 N 1st St",
+    "total_units": 124.0,
+    "effective_rent": null,
+    "occupancy_pct": null,
+    "avg_sqft": null,
+    "year_built": 2022.0,
+    "type": "",
+    "builder": "",
+    "acres": null,
+    "approved_on": "",
+    "construction_start": "",
+    "construction_end": "",
+    "notes": ""
   }
 }

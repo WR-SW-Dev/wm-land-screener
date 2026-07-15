@@ -26,6 +26,7 @@ from market.market_scoring import add_demand_score
 from market.boundaries import load_boundaries, load_municipal_boundaries
 from market.housing_needs import load_housing_needs
 from market import econ_dev
+import config
 from config import DEMAND_WEIGHTS
 
 # Green → red ramp; more need = red. Reused for both maps (rescaled per use).
@@ -170,7 +171,7 @@ def _metric_grid(row):
                    f"*approximate / very tight*, not an exact figure.")
 
 
-# ── Job-addition pins (economic-development overlay) ───────────────────────────
+# ── Development-signal pins (economic-development overlay) ─────────────────────
 def _feature_center(feat):
     """(lat, lon) center of a GeoJSON feature, from its bounding box."""
     (s, w), (n, e) = _bbox_of_features([feat])
@@ -179,9 +180,10 @@ def _feature_center(feat):
 
 def econ_pins(county_key, muni_bounds, county_bounds):
     """
-    Locations + job counts for approved econ-dev items. Geocoded internally by
-    matching the analyst-entered city to a municipal polygon's center (no external
-    geocoder); falls back to the county center. `county_key=None` = all counties.
+    Locations for approved econ-dev / market-signal items. Geocoded internally
+    by matching the analyst-entered city to a municipal polygon's center (no
+    external geocoder); falls back to the county center. `county_key=None` =
+    all counties.
     """
     muni_by_county = {}
     for f in muni_bounds["features"]:
@@ -208,7 +210,8 @@ def econ_pins(county_key, muni_bounds, county_bounds):
         if loc is None:
             continue
         pins.append({"lat": loc[0], "lon": loc[1],
-                     "employer": (v.get("employer") or v["title"][:40]),
+                     "label": (v.get("employer") or v["title"][:40]),
+                     "category": v.get("category", econ_dev.DEFAULT_CATEGORY),
                      "jobs": v.get("jobs"), "investment": v.get("investment_musd"),
                      "link": v["link"]})
     return pins
@@ -225,40 +228,53 @@ def _fmt_musd(m):
     return f"${m:.1f}M"
 
 
-def _add_job_pins(m, pins):
-    """Drop standard teardrop map pins; details show in the click popup (no
-    always-on text on the map)."""
+# Marker icon/color per category — a briefcase doesn't read as "new retail" or
+# "water main expansion", so each category gets its own look on the map.
+_PIN_STYLE = {
+    "employer":    ("briefcase",     "cadetblue"),
+    "retail":      ("shopping-cart", "orange"),
+    "water_sewer": ("tint",          "blue"),
+    "parks":       ("tree",          "green"),
+}
+
+
+def _add_pins(m, pins):
+    """Drop standard teardrop map pins, styled by category; details show in
+    the click popup (no always-on text on the map)."""
     for p in pins:
+        icon_name, color = _PIN_STYLE.get(p["category"], _PIN_STYLE["employer"])
         j = p["jobs"]
         has_jobs = isinstance(j, (int, float)) and j == j
-        popup = (f"<b>{p['employer']}</b><br>"
+        popup = (f"<b>{p['label']}</b><br>"
                  + (f"+{int(j):,} projected jobs<br>" if has_jobs and j else "")
                  + (f"{_fmt_musd(p['investment'])} investment<br>" if p.get("investment") else "")
                  + f'<a href="{p["link"]}" target="_blank">Read article →</a>')
         folium.Marker(
             [p["lat"], p["lon"]],
-            icon=folium.Icon(color="cadetblue", icon="briefcase", prefix="fa"),
-            tooltip=p["employer"],
+            icon=folium.Icon(color=color, icon=icon_name, prefix="fa"),
+            tooltip=p["label"],
             popup=folium.Popup(popup, max_width=260),
         ).add_to(m)
 
 
 def _render_pins_summary(pins):
-    """Summary box of total investment + projected jobs from kept projects."""
+    """Summary box of total investment (+ projected jobs, where reported) from
+    kept projects across all development-signal categories."""
     if not pins:
-        st.caption("No economic-development projects to pin yet — add employer / "
-                   "jobs / investment to your kept items in the Analyst view.")
+        st.caption("No development signals to pin yet — approve items in the "
+                   "review inbox, then fill in city / investment in the Analyst view.")
         return
     jobs = sum(int(p["jobs"]) for p in pins
                if isinstance(p["jobs"], (int, float)) and p["jobs"] == p["jobs"])
     inv = sum(float(p["investment"]) for p in pins if p.get("investment"))
     inv_txt = _fmt_musd(inv)
+    jobs_txt = f" &nbsp;·&nbsp; <b>+{jobs:,}</b> projected jobs" if jobs else ""
     st.markdown(
         f'<div style="background:#f5f6f4;border-left:5px solid #779FA1;'
         f'border-radius:8px;padding:10px 14px;margin:2px 0 10px 0;">'
-        f'<span style="color:#2c3e3f;font-weight:700;">📍 Pinned economic development</span>'
-        f'&nbsp;—&nbsp; <b>+{jobs:,}</b> projected jobs &nbsp;·&nbsp; '
-        f'<b>{inv_txt}</b> investment &nbsp;·&nbsp; {len(pins)} project(s)</div>',
+        f'<span style="color:#2c3e3f;font-weight:700;">📍 Pinned development signals</span>'
+        f'&nbsp;—&nbsp; {len(pins)} project(s) &nbsp;·&nbsp; '
+        f'<b>{inv_txt}</b> investment{jobs_txt}</div>',
         unsafe_allow_html=True)
 
 
@@ -297,7 +313,7 @@ def _build_county_map(bounds, needs, value_col, caption, pins=None):
     ).add_to(m)
     cmap.add_to(m)
     if pins:
-        _add_job_pins(m, pins)
+        _add_pins(m, pins)
     return m
 
 
@@ -432,7 +448,7 @@ def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None):
     ).add_to(m)
     _DEMAND_CMAP.add_to(m)
     if pins:
-        _add_job_pins(m, pins)
+        _add_pins(m, pins)
     return m
 
 
@@ -498,10 +514,11 @@ def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=
 
 # ── Economic development / employer news — on-demand scan + review inbox ───────
 def _render_econ_dev(county_keys, county_labels):
-    st.markdown("##### Economic development & employer news")
+    st.markdown("##### Economic development & market news")
     last = econ_dev.last_scan_ts()
     when = f"last scan {last[:10]}" if last else "no scan yet — first run pulls history"
-    st.caption("Scan for expansion / new-jobs / investment announcements across the "
+    cat_labels = [lbl for _, _, lbl in econ_dev.CATEGORIES.values()]
+    st.caption(f"Scan for {', '.join(cat_labels).lower()} announcements across the "
                "market counties. The first scan pulls available history; each later "
                "scan adds only what's new since the last one. Nothing is kept until "
                f"you approve it — several outlets may cover one project, so keep one "
@@ -509,7 +526,7 @@ def _render_econ_dev(county_keys, county_labels):
 
     scan_col, add_col = st.columns([1, 1])
     if scan_col.button("🔎 Scan now", key="econ_scan"):
-        with st.spinner("Scanning West Michigan economic-development news…"):
+        with st.spinner("Scanning West Michigan economic-development & market news…"):
             try:
                 new, pending, catchup = econ_dev.run_scan()
                 kind = "History catch-up" if catchup else "Scan"
@@ -523,11 +540,14 @@ def _render_econ_dev(county_keys, county_labels):
         m_url = st.text_input("Article URL", key="manual_url")
         m_title = st.text_input("Headline (optional)", key="manual_title")
         m_county = st.selectbox("County", county_labels, key="manual_county")
+        cat_by_label = {lbl: key for key, (_, _, lbl) in econ_dev.CATEGORIES.items()}
+        m_category = st.selectbox("Category", list(cat_by_label), key="manual_category")
         if st.button("Add to kept items", key="manual_add"):
             if m_url.strip():
                 ck = county_keys[county_labels.index(m_county)]
                 _, added = econ_dev.add_manual(m_url.strip(), ck, m_county,
-                                               title=(m_title.strip() or None))
+                                               title=(m_title.strip() or None),
+                                               category=cat_by_label[m_category])
                 st.success("Added — fill in its details below." if added
                            else "That link is already in the list.")
             else:
@@ -557,22 +577,30 @@ def _render_econ_dev(county_keys, county_labels):
         for r in items:
             col, keep, skip = st.columns([7, 1, 1])
             date = (r.get("published", "") or "")[:16]
+            cat = econ_dev.CATEGORIES.get(
+                r.get("category", econ_dev.DEFAULT_CATEGORY),
+                (None, None, "Employer expansion"))[2]
             col.markdown(f"[{r['title']}]({r['link']})  \n"
-                         f"<small>{r.get('source','')} · {date}</small>",
+                         f"<small>{r.get('source','')} · {date} · {cat}</small>",
                          unsafe_allow_html=True)
             keep.button("✓ Keep", key=f"ekeep_{r['id']}",
                         on_click=econ_dev.set_status, args=(r["id"], "approved"))
             skip.button("✕ Skip", key=f"eskip_{r['id']}",
                         on_click=econ_dev.set_status, args=(r["id"], "rejected"))
 
-    if approved:
-        st.markdown(f"**Kept items — add job / investment details ({len(approved)})**")
+    approved_employer = [r for r in approved
+                         if r.get("category", econ_dev.DEFAULT_CATEGORY) == "employer"]
+    approved_market = [r for r in approved
+                       if r.get("category", econ_dev.DEFAULT_CATEGORY) != "employer"]
+
+    if approved_employer:
+        st.markdown(f"**Kept items — add job / investment details ({len(approved_employer)})**")
         st.caption("Click **Read →** to open the article, then fill in employer, "
                    "projected jobs, and investment ($M). These feed the Executive "
                    "summary. Tick **Send back** to return an item to the review inbox.")
         rows = []
-        for r in sorted(approved, key=lambda x: (x["county_label"],
-                                                 x.get("published_ts", ""))):
+        for r in sorted(approved_employer, key=lambda x: (x["county_label"],
+                                                           x.get("published_ts", ""))):
             rows.append({
                 "id": r["id"], "County": r["county_label"],
                 "Employer": r.get("employer", "") or "",
@@ -606,6 +634,61 @@ def _render_econ_dev(county_keys, county_labels):
             econ_dev.update_record(
                 row["id"], employer=(row["Employer"] or ""),
                 jobs=(int(row["Projected jobs"]) if pd.notna(row["Projected jobs"]) else None),
+                investment_musd=(float(row["Investment ($M)"]) if pd.notna(row["Investment ($M)"]) else None),
+                city=(row["City"] or ""), notes=(row["Notes"] or ""))
+
+    if approved_market:
+        st.markdown(f"**Kept items — market-attractiveness projects ({len(approved_market)})**")
+        st.caption("New retail, water/sewer, and parks projects aren't employers — "
+                   "fill in a short project description, investment value, and city. "
+                   "Wrong category from the scan? Fix it in the **Category** column — "
+                   "the map pin updates to match. Tick **Send back** to return an item "
+                   "to the review inbox.")
+        market_cat_keys = [k for k in econ_dev.CATEGORIES if k != "employer"]
+        market_cat_labels = [econ_dev.CATEGORIES[k][2] for k in market_cat_keys]
+        label_to_cat = {econ_dev.CATEGORIES[k][2]: k for k in market_cat_keys}
+        rows = []
+        for r in sorted(approved_market, key=lambda x: (x["county_label"],
+                                                         x.get("published_ts", ""))):
+            cat = econ_dev.CATEGORIES.get(
+                r.get("category", econ_dev.DEFAULT_CATEGORY),
+                (None, None, market_cat_labels[0]))[2]
+            rows.append({
+                "id": r["id"], "County": r["county_label"], "Category": cat,
+                "Project": r.get("employer", "") or "",
+                "Investment ($M)": r.get("investment_musd"),
+                "City": r.get("city", "") or "",
+                "Article": r["link"], "Headline": r["title"],
+                "Notes": r.get("notes", "") or "", "Send back": False,
+            })
+        edited_market = st.data_editor(
+            pd.DataFrame(rows), key="econ_editor_market", hide_index=True,
+            use_container_width=True,
+            column_config={
+                "id": None,
+                "County": st.column_config.TextColumn(disabled=True, width="small"),
+                "Category": st.column_config.SelectboxColumn(
+                    options=market_cat_labels, width="small",
+                    help="Recategorize if the scan matched the wrong keyword set."),
+                "Article": st.column_config.LinkColumn("Article", display_text="Read →",
+                                                       disabled=True, width="small"),
+                "Headline": st.column_config.TextColumn(disabled=True, width="medium"),
+                "Project": st.column_config.TextColumn(width="medium",
+                    help="Short description, e.g. \"New Costco warehouse store\" or "
+                         "\"Water main extension to Sec. 14\"."),
+                "Investment ($M)": st.column_config.NumberColumn(format="%.1f", min_value=0),
+                "City": st.column_config.TextColumn(width="small"),
+                "Notes": st.column_config.TextColumn(width="small"),
+                "Send back": st.column_config.CheckboxColumn(width="small"),
+            },
+        )
+        for _, row in edited_market.iterrows():
+            if row["Send back"]:
+                econ_dev.set_status(row["id"], "pending")
+                continue
+            econ_dev.update_record(
+                row["id"], employer=(row["Project"] or ""),
+                category=label_to_cat.get(row["Category"], "retail"),
                 investment_musd=(float(row["Investment ($M)"]) if pd.notna(row["Investment ($M)"]) else None),
                 city=(row["City"] or ""), notes=(row["Notes"] or ""))
 
@@ -648,9 +731,10 @@ def render_market(view: str, on_continue):
                        "figures; **click a county to zoom into its municipalities**.")
 
             show_pins = st.checkbox(
-                "📍 Show job-addition pins", key="econ_pins_counties",
-                help="Overlay pins for your kept economic-development announcements, "
-                     "labeled with projected job additions.")
+                "📍 Show development pins", key="econ_pins_counties",
+                help="Overlay pins for your kept economic-development / market "
+                     "signals — employer expansions, new retail, water/sewer, "
+                     "and parks projects, each styled by category.")
             pins = econ_pins(None, muni_bounds, bounds) if show_pins else None
             if show_pins:
                 _render_pins_summary(pins)
@@ -679,9 +763,9 @@ def render_market(view: str, on_continue):
             st.button("⬅ Back to counties", on_click=_back_to_counties)
 
             show_pins = st.checkbox(
-                "📍 Show job-addition pins", key=f"econ_pins_{county_key}",
-                help="Overlay pins for kept economic-development announcements in "
-                     "this county, labeled with projected job additions.")
+                "📍 Show development pins", key=f"econ_pins_{county_key}",
+                help="Overlay pins for kept economic-development / market signals "
+                     "in this county, each styled by category.")
             pins = econ_pins(county_key, muni_bounds, bounds) if show_pins else None
             if show_pins:
                 _render_pins_summary(pins)
@@ -731,8 +815,14 @@ def render_market(view: str, on_continue):
                            "noisier ACS estimates (esp. rental vacancy) — read "
                            "those as approximate.")
 
-        st.divider()
-        _render_econ_dev(county_keys, county_labels)
+        if config.IS_LOCAL:
+            st.divider()
+            _render_econ_dev(county_keys, county_labels)
+        else:
+            st.divider()
+            st.caption("Economic-development scanning & curation is done locally "
+                       "by the analyst — the Executive view's pins and summary "
+                       "already reflect the latest curated data.")
 
     st.session_state.submarket = sel_label
     st.success(f"Selected submarket **{sel_label}** will carry into the Land "

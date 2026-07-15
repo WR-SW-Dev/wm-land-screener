@@ -1,6 +1,7 @@
 """
 Central config: paths, bounding boxes, API endpoints, and zoning constants.
 """
+import os
 from pathlib import Path
 
 # ── Project paths ─────────────────────────────────────────────────────────────
@@ -13,6 +14,14 @@ ORDINANCE_DIR = ROOT / "data" / "ordinance"
 
 for d in (DATA_RAW, DATA_PROC, OUTPUT_DIR, ORDINANCE_DIR):
     d.mkdir(parents=True, exist_ok=True)
+
+# ── Deploy environment ─────────────────────────────────────────────────────────
+# Set WR_DEPLOY_ENV=production in the server's systemd unit (never locally) to
+# gate curation UI (econ-dev scan/review/edit) to local-only — see DEPLOY.md.
+# The curated data (econ_dev_queue.json) is still git-tracked and deploys with
+# the code; this only hides the controls that would let the live site's own
+# copy of that file drift out of sync with git.
+IS_LOCAL = os.environ.get("WR_DEPLOY_ENV", "local") != "production"
 
 # ── Ottawa County Master Plan / Zoning Service (gis.miottawa.org) ─────────────
 # Covers: Grand Haven city, Grand Haven Township, Spring Lake Township,

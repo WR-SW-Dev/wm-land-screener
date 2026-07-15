@@ -23,6 +23,14 @@ These are the one-time changes to bring the live site up to the current `main`.
 The economic-development data (`data/econ_dev_queue.json`) IS tracked in git now,
 so it deploys with the code — no separate copy needed.
 
+4. **Econ-dev scanning/curation is local-only.** The systemd service now sets
+   `WR_DEPLOY_ENV=production`, which hides the Scan now / review inbox / editable
+   kept-items tables in the deployed app — everyone using the live site sees only
+   the read-only Executive pins + summary. This is deliberate: it stops the
+   live server's own copy of `econ_dev_queue.json` from being edited directly (and
+   drifting out of sync with git) once more than one person is using the site.
+   Curation always happens locally, then commit → push → redeploy as usual.
+
 ## Steps
 
 ### 1. Make sure `credentials.yaml` on the server has the logins AND the Census key

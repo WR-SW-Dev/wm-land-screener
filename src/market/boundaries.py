@@ -25,7 +25,9 @@ import requests
 from shapely.geometry import mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import DATA_RAW, MARKET_SUBMARKETS, MARKET_COUNTIES  # noqa: E402
+from config import (DATA_RAW, MARKET_SUBMARKETS, MARKET_COUNTIES,  # noqa: E402
+                     MSHDA_OPPORTUNITY_ZONES_SERVICE)
+from data_loader import _arcgis_query  # noqa: E402
 
 _CACHE = DATA_RAW / "market_boundaries.geojson"
 # Michigan county-subdivision cartographic boundaries (shoreline-clipped).
@@ -137,6 +139,46 @@ def load_municipal_boundaries(refresh: bool = False) -> dict:
         return json.loads(_CACHE_MUNI.read_text())
     fc = _build_municipal()
     _CACHE_MUNI.write_text(json.dumps(fc))
+    return fc
+
+
+_CACHE_OZ = DATA_RAW / "market_opportunity_zones.geojson"
+# Envelope loose enough to contain all of Michigan — the real filter is the
+# FULL_TRACT/county-FIPS `where` clause below, not this bbox.
+_MI_BBOX = (-90.5, 41.5, -82.0, 48.5)
+
+
+def _build_opportunity_zones() -> dict:
+    """Opportunity Zone census tracts for every county in MARKET_COUNTIES.
+
+    Filtered by county FIPS prefix on FULL_TRACT (not by bbox), so adding a
+    new county to config.MARKET_COUNTIES picks up its zones automatically —
+    no code change needed here.
+    """
+    where = " OR ".join(f"FULL_TRACT LIKE '{_cofips(c['geo'])}%'" for c in MARKET_COUNTIES)
+    key_by_fips = {_cofips(c["geo"]): c["key"] for c in MARKET_COUNTIES}
+    gdf = _arcgis_query(MSHDA_OPPORTUNITY_ZONES_SERVICE, _MI_BBOX,
+                        extra_params={"where": where})
+    if gdf.empty:
+        return {"type": "FeatureCollection", "features": []}
+
+    features = []
+    for _, r in gdf.iterrows():
+        tract = str(r["FULL_TRACT"])
+        features.append({
+            "type": "Feature",
+            "geometry": mapping(r["geometry"]),
+            "properties": {"tract": tract, "county_key": key_by_fips.get(tract[:5])},
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def load_opportunity_zones(refresh: bool = False) -> dict:
+    """Return the Opportunity Zone tract FeatureCollection, cached to disk."""
+    if _CACHE_OZ.exists() and not refresh:
+        return json.loads(_CACHE_OZ.read_text())
+    fc = _build_opportunity_zones()
+    _CACHE_OZ.write_text(json.dumps(fc))
     return fc
 
 

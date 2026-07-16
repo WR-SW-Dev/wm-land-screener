@@ -25,7 +25,7 @@ from streamlit_folium import st_folium
 
 from market.demographics import load_market_metrics, load_municipal_metrics
 from market.market_scoring import add_demand_score
-from market.boundaries import load_boundaries, load_municipal_boundaries
+from market.boundaries import load_boundaries, load_municipal_boundaries, load_opportunity_zones
 from market.housing_needs import load_housing_needs
 from market import econ_dev
 from market import competition
@@ -126,14 +126,16 @@ def _acs_table(frame, name_label):
 
 @st.cache_data(show_spinner="Loading ACS + housing-needs data…")
 def _market_data():
-    """Cached: scored ACS frame, county housing-needs frame, boundary FCs, and
-    the scored municipal (all city/township) frame + boundaries."""
+    """Cached: scored ACS frame, county housing-needs frame, boundary FCs, the
+    scored municipal (all city/township) frame + boundaries, and Opportunity
+    Zone tract polygons."""
     df = add_demand_score(load_market_metrics())
     needs = load_housing_needs(df)
     bounds = load_boundaries()
     muni = add_demand_score(load_municipal_metrics())
     muni_bounds = load_municipal_boundaries()
-    return df, needs, bounds, muni, muni_bounds
+    oz = load_opportunity_zones()
+    return df, needs, bounds, muni, muni_bounds, oz
 
 
 def _fval(row, col):
@@ -408,7 +410,22 @@ def _render_competition_summary(pins):
 
 
 # ── County heat map (PRIMARY) ──────────────────────────────────────────────────
-def _build_county_map(bounds, needs, value_col, caption, pins=None):
+def _add_opportunity_zones(m, oz_fc):
+    """Outline-only overlay (no fill) so it doesn't compete with the choropleth
+    shading underneath — reads as "this area is also an Opportunity Zone"."""
+    if not oz_fc or not oz_fc.get("features"):
+        return
+    folium.GeoJson(
+        oz_fc,
+        name="Opportunity Zones",
+        style_function=lambda _f: {
+            "fillOpacity": 0, "color": "#3d2b00", "weight": 3, "dashArray": "5,4",
+        },
+        tooltip=folium.GeoJsonTooltip(fields=["tract"], aliases=["Opportunity Zone tract:"]),
+    ).add_to(m)
+
+
+def _build_county_map(bounds, needs, value_col, caption, pins=None, oz_fc=None):
     """Choropleth of the four counties shaded by the chosen units-needed metric."""
     counties = [f for f in bounds["features"] if f["properties"]["tier"] == "county"]
     vals = needs.set_index("key")
@@ -443,6 +460,7 @@ def _build_county_map(bounds, needs, value_col, caption, pins=None):
     cmap.add_to(m)
     if pins:
         _add_pins(m, pins)
+    _add_opportunity_zones(m, oz_fc)
     return m
 
 
@@ -545,7 +563,8 @@ def _bbox_of_features(features):
     return [[min(ys), min(xs)], [max(ys), max(xs)]]
 
 
-def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None, competition_pins_list=None):
+def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None,
+                         competition_pins_list=None, oz_fc=None):
     """Choropleth of one county's municipalities, shaded by demand score, zoomed in."""
     feats = [f for f in muni_bounds["features"]
              if f["properties"].get("county_key") == county_key]
@@ -580,6 +599,7 @@ def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None, competitio
         _add_pins(m, pins)
     if competition_pins_list:
         _add_competition_pins(m, competition_pins_list)
+    _add_opportunity_zones(m, oz_fc)
     return m
 
 
@@ -602,7 +622,7 @@ def _render_place_detail(row):
 
 
 def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=None,
-                           competition_pins_list=None):
+                           competition_pins_list=None, oz_fc=None):
     """Municipal demand-score heat map for one county + selected-place detail."""
     muni = muni_df[muni_df["county_key"] == county_key].reset_index(drop=True)
     if muni.empty:
@@ -614,8 +634,9 @@ def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=
                "estimates — read their scores as approximate.")
 
     map_out = st_folium(_build_municipal_map(muni_bounds, muni, county_key, pins=pins,
-                                             competition_pins_list=competition_pins_list),
-                        height=420, use_container_width=True,
+                                             competition_pins_list=competition_pins_list,
+                                             oz_fc=oz_fc),
+                        height=650, use_container_width=True,
                         key=f"muni_map_{county_key}",
                         returned_objects=["last_active_drawing"])
     clicked = (map_out or {}).get("last_active_drawing")
@@ -1053,7 +1074,7 @@ def render_market(view: str, on_continue):
                "map, then drill into demographics, affordability & submarkets.")
 
     try:
-        df, needs, bounds, muni, muni_bounds = _market_data()
+        df, needs, bounds, muni, muni_bounds, oz = _market_data()
     except Exception as e:                       # noqa: BLE001
         st.error(f"Couldn't load market data: {e}")
         st.button("Continue to Land Screener →", on_click=on_continue, type="primary")
@@ -1084,7 +1105,7 @@ def render_market(view: str, on_continue):
                        "figures; **click a county to zoom into its municipalities**.")
 
             show_pins = st.checkbox(
-                "📍 Show development pins", key="econ_pins_counties",
+                "Show development pins", key="econ_pins_counties",
                 help="Overlay pins for your kept economic-development / market "
                      "signals — employer expansions, new retail, water/sewer, "
                      "and parks projects, each styled by category.")
@@ -1092,11 +1113,17 @@ def render_market(view: str, on_continue):
             if show_pins:
                 _render_pins_summary(pins)
 
+            show_oz = st.checkbox(
+                "Show opportunity zones", key="oz_counties",
+                help="Overlay IRS-approved Opportunity Zone census tracts "
+                     "(MSHDA/state GIS) across all four counties.")
+
             nonce = st.session_state.county_map_nonce
             map_out = st_folium(
                 _build_county_map(bounds, needs, "intensity_total",
-                                  "Total units needed per 1,000 households", pins=pins),
-                height=460, use_container_width=True,
+                                  "Total units needed per 1,000 households", pins=pins,
+                                  oz_fc=oz if show_oz else None),
+                height=650, use_container_width=True,
                 key=f"county_map_{nonce}", returned_objects=["last_active_drawing"])
             clicked = (map_out or {}).get("last_active_drawing")
             if clicked and clicked.get("properties", {}).get("tier") == "county":
@@ -1116,7 +1143,7 @@ def render_market(view: str, on_continue):
             st.button("⬅ Back to counties", on_click=_back_to_counties)
 
             show_pins = st.checkbox(
-                "📍 Show development pins", key=f"econ_pins_{county_key}",
+                "Show development pins", key=f"econ_pins_{county_key}",
                 help="Overlay pins for kept economic-development / market signals "
                      "in this county, each styled by category.")
             pins = econ_pins(county_key, muni_bounds, bounds) if show_pins else None
@@ -1135,11 +1162,22 @@ def render_market(view: str, on_continue):
             else:
                 comp_pins = None
 
+            show_oz = st.checkbox(
+                "Show opportunity zones", key=f"oz_{county_key}",
+                help="Overlay IRS-approved Opportunity Zone census tracts "
+                     "(MSHDA/state GIS) in this county.")
+            county_oz = None
+            if show_oz:
+                county_oz = {"type": "FeatureCollection",
+                            "features": [f for f in oz["features"]
+                                        if f["properties"].get("county_key") == county_key]}
+
             # Municipal heat map goes FIRST — same spot the county map occupied,
             # so zooming in feels continuous rather than making the map "vanish".
             picked = _render_municipalities(county_key, sel_county_label,
                                             muni, muni_bounds, pins=pins,
-                                            competition_pins_list=comp_pins)
+                                            competition_pins_list=comp_pins,
+                                            oz_fc=county_oz)
             if picked:
                 sel_label = picked
 

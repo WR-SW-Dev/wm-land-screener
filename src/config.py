@@ -93,6 +93,16 @@ EGLE_WETLAND_SERVICE = (
     "/WrdOpenData/FeatureServer/11/query"
 )
 
+# ── MSHDA Opportunity Zones (state-wide) ─────────────────────────────────────
+# IRS-approved Opportunity Zone census tracts (2018 designations, static).
+# Source web app: michigan.maps.arcgis.com/apps/webappviewer/index.html?id=8b1413d59b8d420faaf5217a5ab52851
+# Underlying feature service (public, no auth) — layer 3 "OpportunityZone_Tracts".
+# Fields used: FULL_TRACT (state+county+tract FIPS), CNTY_NAME.
+MSHDA_OPPORTUNITY_ZONES_SERVICE = (
+    "https://utility.arcgis.com/usrsvcs/servers"
+    "/478f5a4e75a7469a94ab4478e75878c4/rest/services/CSS/CSS_MSHDA/MapServer/3/query"
+)
+
 # ── Ottawa County Drains (OCWRC) ─────────────────────────────────────────────
 # Ottawa County Water Resources Commissioner drain infrastructure.
 # Layer 16 "All Gravity Mains" filtered to ESTABLISHED COUNTY DRAINS only

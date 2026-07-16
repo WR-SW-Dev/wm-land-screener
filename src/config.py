@@ -405,6 +405,7 @@ CENSUS_BASE_URL    = "https://api.census.gov/data"
 ACS_VARS = {
     "median_hh_income":  "B19013_001E",   # median household income ($)
     "median_gross_rent": "B25064_001E",   # median gross rent ($/mo)
+    "median_home_value": "B25077_001E",   # median value, owner-occupied homes ($)
     "median_age":        "B01002_001E",   # median age (years)
     "population":        "B01003_001E",    # total population
     "tenure_total":      "B25003_001E",   # occupied housing units
@@ -447,6 +448,25 @@ MARKET_COUNTIES = [
     {"key": "muskegon", "label": "Muskegon County", "geo": {"type": "county", "state": "26", "county": "121"}},
     {"key": "allegan",  "label": "Allegan County",  "geo": {"type": "county", "state": "26", "county": "005"}},
 ]
+
+# ── FRED (Federal Reserve Economic Data) — pricing/momentum layer ────────────
+# County HPI (FHFA All-Transactions Index, annual): series `ATNHPIUS<FIPS>A`.
+# State HPI baseline (quarterly): `MISTHPI`, annualized for comparison.
+# County building permits (Census BPS, annual, residential-only): `BPPRIV0<FIPS>`.
+# National 30-yr mortgage rate (weekly): `MORTGAGE30US`.
+# All county series IDs are built from MARKET_COUNTIES' FIPS codes at request
+# time (see market/fred.py) — a county added there is picked up automatically,
+# no new series ID to hardcode. Verified live against the FRED API 2026-07-16.
+FRED_BASE_URL          = "https://api.stlouisfed.org/fred"
+FRED_STATE_HPI_SERIES  = "MISTHPI"
+FRED_MORTGAGE_SERIES   = "MORTGAGE30US"
+
+# Momentum badge: % of a county's 5-yr HNA unit gap already covered by permits
+# issued so far within that study period. Below RED_MAX = red (Underserved),
+# up to YELLOW_MAX = yellow (Responding), above = green (Saturating). Matches
+# the existing heat map's red=more-need / green=less-need convention.
+FRED_MOMENTUM_RED_MAX    = 50
+FRED_MOMENTUM_YELLOW_MAX = 100
 
 # ── Demand-score weights (Phase 1.1) ──────────────────────────────────────────
 # 0–100 housing-need / BTR-demand score. Each signal is normalized 0–1 over the

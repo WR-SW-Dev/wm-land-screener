@@ -94,6 +94,7 @@ def _derive(raw: dict, baseline_pop) -> dict:
 
     income      = g("median_hh_income")
     rent        = g("median_gross_rent")
+    home_value  = g("median_home_value")
     pop         = g("population")
     ten_total   = g("tenure_total")
     ten_renter  = g("tenure_renter")
@@ -115,6 +116,7 @@ def _derive(raw: dict, baseline_pop) -> dict:
     return {
         "median_hh_income":   income,
         "median_gross_rent":  rent,
+        "median_home_value":  home_value,
         "median_age":         g("median_age"),
         "population":         pop,
         "households":         ten_total,   # occupied units ≈ households
@@ -274,6 +276,6 @@ if __name__ == "__main__":
     frame = load_market_metrics(refresh=refresh)
     pd.set_option("display.max_columns", None, "display.width", 200)
     cols = ["label", "tier", "median_hh_income", "max_affordable_rent",
-            "median_gross_rent", "rental_vacancy_rate", "cost_burden_pct",
-            "renter_share_pct", "occupancy_pct", "pop_growth_pct"]
+            "median_gross_rent", "median_home_value", "rental_vacancy_rate",
+            "cost_burden_pct", "renter_share_pct", "occupancy_pct", "pop_growth_pct"]
     print(frame[cols].to_string(index=False))

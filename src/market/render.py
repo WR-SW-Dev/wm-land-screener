@@ -21,6 +21,7 @@ import pandas as pd
 import streamlit as st
 import folium
 import branca.colormap as cm
+from branca.element import MacroElement, Template
 from streamlit_folium import st_folium
 
 from market.demographics import load_market_metrics, load_municipal_metrics
@@ -29,15 +30,34 @@ from market.boundaries import load_boundaries, load_municipal_boundaries, load_o
 from market.housing_needs import load_housing_needs
 from market import econ_dev
 from market import competition
+from market import fred as fred_data_mod
 import config
 from config import DEMAND_WEIGHTS
 
 # Green → red ramp; more need = red. Reused for both maps (rescaled per use).
 _RAMP = ["#1a9850", "#fee08b", "#d73027"]
 
-# Demand-score ramp for the Ottawa submarket sub-map.
-_DEMAND_CMAP = cm.LinearColormap(_RAMP, vmin=35, vmax=60,
-                                 caption="Housing-need / demand score (0–100)")
+# Demand-score TIER for the municipal drill-down map — replaces a raw 0–100
+# score (which has no meaning on its own; "67" only makes sense compared to
+# other places) with a plain-language tier + rank. Same green/amber/red as the
+# heat map and the FRED momentum badge, so it reads as one visual language.
+_TIER_COLORS = {"low": "#1a9850", "mod": "#b45309", "high": "#d73027"}
+_TIER_LABELS = {"low": "Low demand", "mod": "Moderate demand", "high": "High demand"}
+
+
+def _demand_tiers(county_df):
+    """Rank (1=highest) + tier for each municipality, by TERTILE within this
+    county's own list — relative to that county, not a fixed cutoff, so it
+    can't drift stale the way the old fixed 35–60 color scale did. Returns
+    {key: {"rank": int, "n": int, "tier": "low"/"mod"/"high"}}."""
+    n = len(county_df)
+    ranked = county_df.sort_values("demand_score", ascending=False).reset_index(drop=True)
+    out = {}
+    for i, row in ranked.iterrows():
+        pct = i / n if n else 0
+        tier = "high" if pct < 1 / 3 else ("mod" if pct < 2 / 3 else "low")
+        out[str(row["key"])] = {"rank": i + 1, "n": n, "tier": tier}
+    return out
 
 # Plain-English explanation of each demand-score factor (keys match DEMAND_WEIGHTS).
 _DEMAND_FACTOR_HELP = {
@@ -95,6 +115,7 @@ _FMT = {
     "median_hh_income":    ("Median HH income",          lambda v: f"${v:,.0f}"),
     "max_affordable_rent": ("Max affordable rent (30%)", lambda v: f"${v:,.0f}/mo"),
     "median_gross_rent":   ("Median gross rent",         lambda v: f"${v:,.0f}/mo"),
+    "median_home_value":   ("Median home value",         lambda v: f"${v:,.0f}"),
     "rental_vacancy_rate": ("Rental vacancy rate",       lambda v: f"{v:.1f}%"),
     "cost_burden_pct":     ("Cost-burdened renters",     lambda v: f"{v:.0f}%"),
     "renter_share_pct":    ("Renter share",              lambda v: f"{v:.0f}%"),
@@ -106,12 +127,13 @@ _FMT = {
 
 # Column set + number formatting for the Analyst ACS tables (county + municipal).
 _ACS_TABLE_COLS = ["label", "demand_score", "median_hh_income", "max_affordable_rent",
-                   "median_gross_rent", "rental_vacancy_rate", "cost_burden_pct",
-                   "renter_share_pct", "occupancy_pct", "pop_growth_pct",
+                   "median_gross_rent", "median_home_value", "rental_vacancy_rate",
+                   "cost_burden_pct", "renter_share_pct", "occupancy_pct", "pop_growth_pct",
                    "median_age", "population"]
 _ACS_TABLE_FMT = {
     "median_hh_income": "${:,.0f}", "max_affordable_rent": "${:,.0f}",
-    "median_gross_rent": "${:,.0f}", "population": "{:,.0f}", "demand_score": "{:.1f}",
+    "median_gross_rent": "${:,.0f}", "median_home_value": "${:,.0f}",
+    "population": "{:,.0f}", "demand_score": "{:.1f}",
     "rental_vacancy_rate": "{:.1f}%", "cost_burden_pct": "{:.1f}%",
     "renter_share_pct": "{:.1f}%", "occupancy_pct": "{:.1f}%",
     "pop_growth_pct": "{:+.1f}%", "median_age": "{:.0f}",
@@ -127,15 +149,20 @@ def _acs_table(frame, name_label):
 @st.cache_data(show_spinner="Loading ACS + housing-needs data…")
 def _market_data():
     """Cached: scored ACS frame, county housing-needs frame, boundary FCs, the
-    scored municipal (all city/township) frame + boundaries, and Opportunity
-    Zone tract polygons."""
+    scored municipal (all city/township) frame + boundaries, Opportunity Zone
+    tract polygons, and FRED pricing/momentum data."""
     df = add_demand_score(load_market_metrics())
     needs = load_housing_needs(df)
     bounds = load_boundaries()
     muni = add_demand_score(load_municipal_metrics())
     muni_bounds = load_municipal_boundaries()
     oz = load_opportunity_zones()
-    return df, needs, bounds, muni, muni_bounds, oz
+    try:
+        fred = fred_data_mod.load_fred_data()
+    except Exception as e:                       # noqa: BLE001
+        print(f"  [warn] FRED data unavailable: {e}")
+        fred = {"mortgage_rate": [], "state_hpi": [], "counties": {}}
+    return df, needs, bounds, muni, muni_bounds, oz, fred
 
 
 def _fval(row, col):
@@ -150,11 +177,14 @@ def _metric_grid(row):
     rv_unreliable = bool(row.get("rental_vacancy_unreliable"))
     rv_display = _fval(row, "rental_vacancy_rate") + ("*" if rv_unreliable else "")
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c3b = st.columns(4)
     c1.metric(_FMT["median_hh_income"][0],    _fval(row, "median_hh_income"))
     c2.metric(_FMT["max_affordable_rent"][0], _fval(row, "max_affordable_rent"),
               help="Median HH income ÷ 12 × 30% — what this market can afford monthly.")
     c3.metric(_FMT["median_gross_rent"][0],   _fval(row, "median_gross_rent"))
+    c3b.metric(_FMT["median_home_value"][0],  _fval(row, "median_home_value"),
+               help="Median value of owner-occupied homes (ACS) — not the same as "
+                    "the FHFA price-index appreciation shown in Market Pricing below.")
 
     c4, c5, c6 = st.columns(3)
     c4.metric(_FMT["rental_vacancy_rate"][0], rv_display,
@@ -277,7 +307,7 @@ def _render_pins_summary(pins):
     st.markdown(
         f'<div style="background:#f5f6f4;border-left:5px solid #779FA1;'
         f'border-radius:8px;padding:10px 14px;margin:2px 0 10px 0;">'
-        f'<span style="color:#2c3e3f;font-weight:700;">📍 Pinned development signals</span>'
+        f'<span style="color:#2c3e3f;font-weight:700;">Pinned development signals</span>'
         f'&nbsp;—&nbsp; {len(pins)} project(s) &nbsp;·&nbsp; '
         f'<b>{inv_txt}</b> investment{jobs_txt}</div>',
         unsafe_allow_html=True)
@@ -404,12 +434,38 @@ def _render_competition_summary(pins):
     st.markdown(
         f'<div style="background:#f5f6f4;border-left:5px solid #5a8a8c;'
         f'border-radius:8px;padding:10px 14px;margin:2px 0 10px 0;">'
-        f'<span style="color:#2c3e3f;font-weight:700;">🏘️ Competition pipeline</span>'
+        f'<span style="color:#2c3e3f;font-weight:700;">Competition pipeline</span>'
         f'&nbsp;—&nbsp; {len(pins)} project(s) &nbsp;·&nbsp; {stage_txt}{direct_txt}</div>',
         unsafe_allow_html=True)
 
 
 # ── County heat map (PRIMARY) ──────────────────────────────────────────────────
+_TIER_LEGEND_TEMPLATE = """
+{% macro html(this, kwargs) %}
+<div style="position: fixed; top: 80px; right: 10px; z-index: 9999;
+            background: #ffffff; padding: 10px 14px; border-radius: 8px;
+            box-shadow: 0 1px 4px rgba(0,0,0,0.25); font-family: sans-serif;
+            font-size: 13px; color: #2c3e3f; line-height: 1.9;">
+  <div style="font-weight:600; margin-bottom:4px;">Housing-need demand</div>
+  <div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;
+       background:#d73027;margin-right:6px;"></span>High demand (top third)</div>
+  <div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;
+       background:#b45309;margin-right:6px;"></span>Moderate demand (middle third)</div>
+  <div><span style="display:inline-block;width:9px;height:9px;border-radius:50%;
+       background:#1a9850;margin-right:6px;"></span>Low demand (bottom third)</div>
+</div>
+{% endmacro %}
+"""
+
+
+def _add_tier_legend(m):
+    """Discrete Low/Moderate/High legend, replacing the old continuous
+    colorbar — tiers are ranked within each county, not a fixed score cutoff."""
+    legend = MacroElement()
+    legend._template = Template(_TIER_LEGEND_TEMPLATE)
+    m.get_root().add_child(legend)
+
+
 def _add_opportunity_zones(m, oz_fc):
     """Outline-only overlay (no fill) so it doesn't compete with the choropleth
     shading underneath — reads as "this area is also an Opportunity Zone"."""
@@ -499,7 +555,77 @@ def _render_rental_by_income(county_key, needs_raw):
     c_table.dataframe(tbl, use_container_width=True, hide_index=True)
 
 
-def _render_county_drilldown(county_key, needs, acs_df):
+def _render_market_pricing(county_key, needs_row, fred):
+    """Market Pricing & Momentum (FRED): HPI trend + permits vs the HNA need."""
+    import altair as alt
+
+    metrics = fred_data_mod.hpi_metrics(county_key, fred)
+    chart_rows = fred_data_mod.hpi_chart_frame(county_key, fred)
+    permit_rows = fred_data_mod.permits_recent(county_key, fred)
+    badge = fred_data_mod.momentum_badge(county_key, fred, needs_row)
+
+    if not metrics and not permit_rows:
+        return  # FRED unavailable for this county — skip the section quietly
+
+    st.markdown("##### Market pricing & momentum")
+    st.caption("Is the market already responding to this need? Home-price "
+               "appreciation and building-permit activity (FHFA / Census, via FRED).")
+    left, right = st.columns(2)
+
+    with left:
+        if metrics:
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Home-price YoY", f"{metrics['yoy_pct']:+.1f}%",
+                      help=f"FHFA All-Transactions HPI, {metrics['latest_year']} vs prior year.")
+            m2.metric("5-yr cumulative", f"{metrics['cum_5y_pct']:+.1f}%"
+                      if metrics["cum_5y_pct"] is not None else "—")
+            m3.metric("vs Michigan", f"{metrics['vs_state_delta']:+.1f} pts"
+                      if metrics["vs_state_delta"] is not None else "—",
+                      help="This county's YoY appreciation minus the state's YoY appreciation.")
+        if chart_rows:
+            cdf = pd.DataFrame(chart_rows)
+            chart = (
+                alt.Chart(cdf)
+                .mark_line(point=True)
+                .encode(
+                    x=alt.X("year:N", title=None),
+                    y=alt.Y("index:Q", title="Index (rebased to 100)"),
+                    color=alt.Color("series:N", title=None,
+                                    scale=alt.Scale(domain=["County", "Michigan"],
+                                                    range=["#779FA1", "#9ca3af"])),
+                    tooltip=["year", "series", alt.Tooltip("index:Q", format=".1f")],
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(chart, use_container_width=True)
+
+    with right:
+        if permit_rows:
+            pdf = pd.DataFrame(permit_rows)
+            pdf["year"] = pdf["date"].str[:4]
+            pchart = (
+                alt.Chart(pdf)
+                .mark_bar(color="#779FA1")
+                .encode(
+                    x=alt.X("year:N", title=None),
+                    y=alt.Y("value:Q", title="New housing units permitted"),
+                    tooltip=["year", alt.Tooltip("value:Q", title="Units", format=",.0f")],
+                )
+                .properties(height=220)
+            )
+            st.altair_chart(pchart, use_container_width=True)
+        if badge:
+            dot = {"red": "🔴", "yellow": "🟡", "green": "🟢"}[badge["color"]]
+            st.markdown(f"{dot} **{badge['label']}** — permits issued in "
+                        f"{badge['study_period']} so far cover "
+                        f"**{badge['pct']:.0f}%** of the {badge['total_need']:,.0f}-unit gap "
+                        f"({badge['cumulative_permits']:,.0f} units permitted).")
+            st.caption("Red = still well below need (opportunity). Yellow = "
+                       "responding. Green = permits have largely caught up to "
+                       "the need — matches the heat map's red=more-need convention.")
+
+
+def _render_county_drilldown(county_key, needs, acs_df, fred=None):
     needs_row = needs.set_index("key").loc[county_key]
     st.markdown(f"#### {needs_row['label']} — housing need")
     st.caption(f"Source: {needs_row['report']}. Gap = new units needed over "
@@ -514,6 +640,10 @@ def _render_county_drilldown(county_key, needs, acs_df):
         st.caption(f"Intensity: {needs_row['intensity_total']:.0f} total / "
                    f"{needs_row['intensity_rental']:.0f} rental units needed per "
                    f"1,000 existing households ({needs_row['households']:,.0f} households).")
+
+    if fred:
+        st.write("")
+        _render_market_pricing(county_key, needs_row, fred)
 
     st.write("")
     _render_rental_by_income(county_key, needs)
@@ -565,19 +695,24 @@ def _bbox_of_features(features):
 
 def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None,
                          competition_pins_list=None, oz_fc=None):
-    """Choropleth of one county's municipalities, shaded by demand score, zoomed in."""
+    """Choropleth of one county's municipalities, shaded by demand TIER (low/
+    moderate/high, by tertile within this county), zoomed in."""
     feats = [f for f in muni_bounds["features"]
              if f["properties"].get("county_key") == county_key]
     keyed = muni_df.set_index(muni_df["key"].astype(str))
-    score_by_key = keyed["demand_score"].to_dict()
-    # Boundary NAME is just the base name ("Grand Haven") and can't tell a city
-    # from its township; use the ACS-derived label ("Grand Haven city" vs
-    # "…charter township") so the map tooltip matches the dropdown/detail.
     label_by_key = keyed["label"].to_dict()
+    tiers = _demand_tiers(muni_df)
     for f in feats:
         k = str(f["properties"]["key"])
-        f["properties"]["score"] = round(float(score_by_key.get(k, 0) or 0), 1)
+        info = tiers.get(k, {"rank": None, "n": len(muni_df), "tier": "low"})
+        f["properties"]["tier"] = info["tier"]
+        f["properties"]["tier_label"] = _TIER_LABELS[info["tier"]]
+        # Boundary NAME is just the base name ("Grand Haven") and can't tell a
+        # city from its township; use the ACS-derived label ("Grand Haven
+        # city" vs "…charter township") so the tooltip matches the dropdown/detail.
         f["properties"]["label"] = label_by_key.get(k, f["properties"].get("label"))
+        f["properties"]["rank_text"] = (f"{info['rank']} of {info['n']}"
+                                        if info["rank"] else "—")
 
     m = folium.Map(tiles="cartodbpositron", control_scale=True)
     if feats:
@@ -586,15 +721,16 @@ def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None,
         {"type": "FeatureCollection", "features": feats},
         name="Municipalities",
         style_function=lambda f: {
-            "fillColor": _DEMAND_CMAP(f["properties"]["score"]),
+            "fillColor": _TIER_COLORS[f["properties"]["tier"]],
             "color": "#2c3e3f", "weight": 1.0, "fillOpacity": 0.72,
         },
         highlight_function=lambda _f: {"weight": 3, "color": "#779FA1",
                                        "fillOpacity": 0.85},
-        tooltip=folium.GeoJsonTooltip(fields=["label", "score"],
-                                      aliases=["Municipality:", "Demand score:"]),
+        tooltip=folium.GeoJsonTooltip(
+            fields=["label", "tier_label", "rank_text"],
+            aliases=["Municipality:", "Demand:", "Rank in county:"]),
     ).add_to(m)
-    _DEMAND_CMAP.add_to(m)
+    _add_tier_legend(m)
     if pins:
         _add_pins(m, pins)
     if competition_pins_list:
@@ -621,19 +757,16 @@ def _render_place_detail(row):
                 st.caption(help_txt)
 
 
-def _render_municipalities(county_key, county_label, muni_df, muni_bounds, pins=None,
+def _render_municipalities(county_key, muni_df, muni_bounds, pins=None,
                            competition_pins_list=None, oz_fc=None):
     """Municipal demand-score heat map for one county + selected-place detail."""
     muni = muni_df[muni_df["county_key"] == county_key].reset_index(drop=True)
     if muni.empty:
         st.info("No municipal data for this county.")
         return
-    st.markdown(f"##### {county_label} municipalities — demand score (secondary scoring)")
-    st.caption("🟩 lower → 🟥 higher demand. Hover for the score; click a "
-               "city/township to drill in. Small rural townships have noisier ACS "
-               "estimates — read their scores as approximate.")
 
-    map_out = st_folium(_build_municipal_map(muni_bounds, muni, county_key, pins=pins,
+    map_out = st_folium(_build_municipal_map(muni_bounds, muni, county_key,
+                                             pins=pins,
                                              competition_pins_list=competition_pins_list,
                                              oz_fc=oz_fc),
                         height=650, use_container_width=True,
@@ -679,7 +812,7 @@ def _render_econ_dev(county_keys, county_labels):
                f"and skip the duplicates.  _({when})_")
 
     scan_col, add_col = st.columns([1, 1])
-    if scan_col.button("🔎 Scan now", key="econ_scan"):
+    if scan_col.button("Scan now", key="econ_scan"):
         with st.spinner("Scanning West Michigan economic-development & market news…"):
             try:
                 new, pending, catchup = econ_dev.run_scan()
@@ -886,7 +1019,7 @@ def _render_competition():
                f"below.  _({when})_")
 
     scan_col, add_col, existing_col = st.columns([1, 1, 1])
-    if scan_col.button("🔎 Scan now", key="competition_scan"):
+    if scan_col.button("Scan now", key="competition_scan"):
         with st.spinner("Scanning for competing development projects…"):
             try:
                 new, pending, catchup = competition.run_scan()
@@ -1070,15 +1203,28 @@ def _render_competition():
 # ── Main entry ─────────────────────────────────────────────────────────────────
 def render_market(view: str, on_continue):
     st.subheader("1. Market Feasibility")
-    st.caption("Where should we build? County housing-need (units needed) heat "
-               "map, then drill into demographics, affordability & submarkets.")
 
     try:
-        df, needs, bounds, muni, muni_bounds, oz = _market_data()
+        df, needs, bounds, muni, muni_bounds, oz, fred = _market_data()
     except Exception as e:                       # noqa: BLE001
         st.error(f"Couldn't load market data: {e}")
         st.button("Continue to Land Screener →", on_click=on_continue, type="primary")
         return
+
+    st.caption("Where should we build? County housing-need (units needed) heat "
+              "map, then drill into demographics, affordability & submarkets.")
+
+    mort = fred_data_mod.mortgage_snapshot(fred)
+    if mort:
+        arrow = "▲" if mort["delta"] > 0 else ("▼" if mort["delta"] < 0 else "→")
+        st.markdown(
+            f"""<div style="background-color:#dcebec; border-left:4px solid #779FA1;
+                        border-radius:6px; padding:12px 16px; margin-bottom:8px;">
+            <span style="color:#2c3e3f; font-size:14px;">
+            <strong style="color:#3f6b6d;">30-yr mortgage rate (national, FRED): {mort['latest']:.2f}%</strong>
+            {arrow} {mort['delta']:+.2f} pts vs ~1 quarter ago
+            </span></div>""",
+            unsafe_allow_html=True)
 
     county_labels = needs["label"].tolist()
     county_keys   = needs["key"].tolist()
@@ -1104,19 +1250,20 @@ def render_market(view: str, on_continue):
                        "county isn't red just for being big). Hover for the "
                        "figures; **click a county to zoom into its municipalities**.")
 
-            show_pins = st.checkbox(
+            t1, t2, _ = st.columns([1, 1, 2])
+            show_pins = t1.checkbox(
                 "Show development pins", key="econ_pins_counties",
                 help="Overlay pins for your kept economic-development / market "
                      "signals — employer expansions, new retail, water/sewer, "
                      "and parks projects, each styled by category.")
-            pins = econ_pins(None, muni_bounds, bounds) if show_pins else None
-            if show_pins:
-                _render_pins_summary(pins)
-
-            show_oz = st.checkbox(
+            show_oz = t2.checkbox(
                 "Show opportunity zones", key="oz_counties",
                 help="Overlay IRS-approved Opportunity Zone census tracts "
                      "(MSHDA/state GIS) across all four counties.")
+
+            pins = econ_pins(None, muni_bounds, bounds) if show_pins else None
+            if show_pins:
+                _render_pins_summary(pins)
 
             nonce = st.session_state.county_map_nonce
             map_out = st_folium(
@@ -1142,19 +1289,31 @@ def render_market(view: str, on_continue):
             sel_county_label = label_by_key.get(county_key, county_key)
             st.button("⬅ Back to counties", on_click=_back_to_counties)
 
-            show_pins = st.checkbox(
+            st.markdown(f"##### {sel_county_label} municipalities — demand score")
+            st.caption("🟩 low → 🟥 high demand, ranked by tertile within this county's own "
+                       "municipalities (not a fixed score cutoff). Hover for the tier and rank; "
+                       "click a city/township to drill in. Small rural townships have noisier "
+                       "ACS estimates — read their tier as approximate.")
+
+            t1, t2, t3, _ = st.columns([1, 1, 1, 1])
+            show_pins = t1.checkbox(
                 "Show development pins", key=f"econ_pins_{county_key}",
                 help="Overlay pins for kept economic-development / market signals "
                      "in this county, each styled by category.")
-            pins = econ_pins(county_key, muni_bounds, bounds) if show_pins else None
-            if show_pins:
-                _render_pins_summary(pins)
-
-            show_competition = st.checkbox(
+            show_competition = t2.checkbox(
                 "Show competition pins", key=f"competition_pins_{county_key}",
                 help="Overlay kept competing-development projects for Grand Haven / "
                      "Grand Haven Twp / Spring Lake Twp, colored by stage — a star "
                      "marks Allen Edwin/CopperBay, WR-Dev's direct BTR competitor.")
+            show_oz = t3.checkbox(
+                "Show opportunity zones", key=f"oz_{county_key}",
+                help="Overlay IRS-approved Opportunity Zone census tracts "
+                     "(MSHDA/state GIS) in this county.")
+
+            pins = econ_pins(county_key, muni_bounds, bounds) if show_pins else None
+            if show_pins:
+                _render_pins_summary(pins)
+
             if show_competition:
                 with st.spinner("Geocoding project addresses…"):
                     comp_pins = competition_pins(muni_bounds)
@@ -1162,10 +1321,6 @@ def render_market(view: str, on_continue):
             else:
                 comp_pins = None
 
-            show_oz = st.checkbox(
-                "Show opportunity zones", key=f"oz_{county_key}",
-                help="Overlay IRS-approved Opportunity Zone census tracts "
-                     "(MSHDA/state GIS) in this county.")
             county_oz = None
             if show_oz:
                 county_oz = {"type": "FeatureCollection",
@@ -1174,7 +1329,7 @@ def render_market(view: str, on_continue):
 
             # Municipal heat map goes FIRST — same spot the county map occupied,
             # so zooming in feels continuous rather than making the map "vanish".
-            picked = _render_municipalities(county_key, sel_county_label,
+            picked = _render_municipalities(county_key,
                                             muni, muni_bounds, pins=pins,
                                             competition_pins_list=comp_pins,
                                             oz_fc=county_oz)
@@ -1183,7 +1338,7 @@ def render_market(view: str, on_continue):
 
             # County housing-need + demographics below, as supporting context.
             st.divider()
-            _render_county_drilldown(county_key, needs, df)
+            _render_county_drilldown(county_key, needs, df, fred=fred)
 
     else:  # Analyst — full tables
         sel_label = st.selectbox("Carry submarket into Land Screener",
@@ -1203,6 +1358,27 @@ def render_market(view: str, on_continue):
             use_container_width=True, hide_index=True)
         st.caption("Source: county Housing Needs Assessments (Bowen National "
                    "Research). Ottawa/Kent 2024–2029; Allegan/Muskegon 2022–2027.")
+
+        st.markdown("##### Market pricing & momentum — by county (FRED)")
+        st.caption("Plain historical series behind the Executive view's charts — "
+                   "FHFA All-Transactions HPI (annual) and Census building permits (annual).")
+        for c_key, c_label in zip(county_keys, county_labels):
+            hpi_hist = (fred.get("counties", {}).get(c_key) or {}).get("hpi") or []
+            permits_hist = (fred.get("counties", {}).get(c_key) or {}).get("permits") or []
+            if not hpi_hist and not permits_hist:
+                continue
+            with st.expander(f"{c_label} — HPI & permits history"):
+                hcol, pcol = st.columns(2)
+                if hpi_hist:
+                    hdf = pd.DataFrame(hpi_hist).rename(
+                        columns={"date": "Year", "value": "HPI (2000=100)"})
+                    hdf["Year"] = hdf["Year"].str[:4]
+                    hcol.dataframe(hdf.iloc[::-1], use_container_width=True, hide_index=True)
+                if permits_hist:
+                    pdf_hist = pd.DataFrame(permits_hist).rename(
+                        columns={"date": "Year", "value": "Units permitted"})
+                    pdf_hist["Year"] = pdf_hist["Year"].str[:4]
+                    pcol.dataframe(pdf_hist.iloc[::-1], use_container_width=True, hide_index=True)
 
         st.markdown("##### ACS demographics & affordability — by county")
         st.dataframe(_acs_table(df[df["tier"] == "county"], "County"),

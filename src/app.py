@@ -1476,37 +1476,106 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
 
     # ── Manual Listings tab ───────────────────────────────────────────────────────
     with tab2:
-        _ML_FILE = ROOT / "Potential Land New Process for AI Tool.xlsx"
+        # Reads the analyst's live-maintained tracker directly from the project
+        # root — she edits this file in place, so no sync/copy step is needed.
+        # Both CARWM and Facebook Marketplace listings live in ONE sheet, stacked
+        # (a "CARWM & Facebook Marketplace Listings" block, then a second block
+        # starting at a "Property Key" header row) — header ROW POSITIONS shift
+        # as listings are added/removed, and even column layout has changed
+        # mid-use (an extra Listing Date / Days on Market pair got inserted), so
+        # both header rows are found by scanning for their first-cell text and
+        # columns are matched by normalized header name rather than fixed
+        # position — a fixed-position parser broke twice in one session already.
+        _ML_FILE = ROOT / "Manual Add Land Listings.xlsx"
+
+        # normalized (lowercase, letters-only) header text → canonical column name.
+        _ML_COLUMN_ALIASES = {
+            "propertykeyaddress": "Address", "address": "Address",
+            "listingdate": "Listing_Date",
+            "daysonmarket": "Days_on_Market",
+            "listprice": "List_Price",
+            "city": "City",
+            "county": "County",
+            "zoning": "Zoning",
+            "allowabledensity": "Allowable_Density",
+            "masterplan": "Master_Plan",
+            "masterplandensity": "Master_Plan_Density",
+            "lotacres": "Lot_Acres", "acres": "Lot_Acres",
+            "listpriceacre": "List_Price_per_Acre", "priceacre": "List_Price_per_Acre",
+            "roadfrontage": "Road_Frontage",
+            "utilitiesavailable": "Utilities_Available", "utilities": "Utilities_Available",
+            "eglewetland": "EGLE_Wetland", "wetland": "EGLE_Wetland", "wetlands": "EGLE_Wetland",
+            "minimumlotarea": "Min_Lot_Area", "minlotarea": "Min_Lot_Area",
+            "maximumlotcoverage": "Max_Lot_Coverage", "maxlotcoverage": "Max_Lot_Coverage",
+            "minimumunitsize": "Min_Unit_Size", "minunitsize": "Min_Unit_Size",
+            "minimumgroundfloor": "Min_Ground_Floor", "mingroundfloor": "Min_Ground_Floor",
+            "notes": "Notes",
+            "link": "Listing_URL", "listingurl": "Listing_URL",
+            # Bare "Property Key" means the CARWM address in the first block and
+            # the Facebook ID in the second — resolved per-block below, not here.
+        }
+
+        def _ml_norm(s):
+            import re as _re
+            return _re.sub(r"[^a-z]", "", str(s).lower()) if s is not None else ""
+
+        def _ml_parse_block(rows, header_idx, end_idx, id_column):
+            """Build a DataFrame from one stacked block, matching columns by
+            normalized header name (not position) so column reordering/insertion
+            doesn't silently misalign data."""
+            header_row = rows[header_idx]
+            col_map = {}  # column position -> canonical name
+            for pos, cell in enumerate(header_row):
+                if cell is None:
+                    continue
+                key = _ml_norm(cell)
+                if key == "propertykey":
+                    col_map[pos] = id_column
+                elif key in _ML_COLUMN_ALIASES:
+                    col_map[pos] = _ML_COLUMN_ALIASES[key]
+            records = []
+            for r in rows[header_idx + 1:end_idx]:
+                if not r or r[0] is None or str(r[0]).strip() == "":
+                    continue  # blank row, or a wrapped note continuation with no key
+                records.append({canon: (r[pos] if pos < len(r) else None)
+                                for pos, canon in col_map.items()})
+            return pd.DataFrame(records)
 
         @st.cache_data(ttl=300)
         def load_manual_listings(path: str):
-            """Read CARWM and Facebook listings from Excel, preserving hyperlinks."""
+            """Read CARWM and Facebook listings, stacked in one sheet, keyed by
+            header text rather than fixed sheet/row layout."""
             import openpyxl as _oxl
-            # ── CARWM sheet ───────────────────────────────────────────────────────
-            carwm = pd.read_excel(path, sheet_name="CARWM", header=3)
-            carwm.columns = [
-                "Address", "Listing_Date", "Days_on_Market", "List_Price",
-                "City", "County", "Zoning", "Allowable_Density",
-                "Master_Plan", "Master_Plan_Density", "Lot_Acres", "List_Price_per_Acre",
-                "Road_Frontage", "Utilities_Available", "EGLE_Wetland",
-                "Min_Lot_Area", "Max_Lot_Coverage", "Min_Unit_Size",
-                "Min_Ground_Floor", "Notes",
+            wb = _oxl.load_workbook(path, read_only=True, data_only=True)
+            ws = wb[wb.sheetnames[0]]
+            rows = list(ws.iter_rows(values_only=True))
+
+            header_positions = [
+                i for i, r in enumerate(rows)
+                if r and r[0] is not None and "propertykey" in _ml_norm(r[0])
             ]
-            carwm = carwm[carwm["Address"].notna() & (carwm["Address"].astype(str).str.strip() != "")].reset_index(drop=True)
+            if not header_positions:
+                return pd.DataFrame(), pd.DataFrame()
+            carwm_start = header_positions[0]
+            fb_start = header_positions[1] if len(header_positions) > 1 else len(rows)
+
+            carwm = _ml_parse_block(rows, carwm_start, fb_start, id_column="Address")
+            facebook = (_ml_parse_block(rows, fb_start, len(rows), id_column="ID")
+                       if fb_start < len(rows) else pd.DataFrame())
+
+            for col in ("Address", "City", "County", "Lot_Acres", "List_Price",
+                       "Zoning", "Utilities_Available", "Notes"):
+                if col not in carwm.columns:
+                    carwm[col] = None
             carwm["List_Price"] = pd.to_numeric(carwm["List_Price"], errors="coerce")
             carwm["Lot_Acres"]  = pd.to_numeric(carwm["Lot_Acres"],  errors="coerce")
             carwm["Notes"]      = carwm["Notes"].astype(str).str.replace("\n", " ").replace("nan", "")
             carwm["Utilities_Available"] = carwm["Utilities_Available"].astype(str).replace("nan", "")
 
-            # ── FB Marketplace sheet ──────────────────────────────────────────────
-            facebook = pd.read_excel(path, sheet_name="FB Marketplace", header=4)
-            facebook.columns = [
-                "ID", "Listing_URL", "City", "County", "Lot_Acres", "List_Price",
-                "Price_per_Acre", "Zoning", "Master_Plan", "Utilities_Available",
-                "Wetlands", "Allowable_Density", "Min_Lot_Area", "Max_Lot_Coverage",
-                "Min_Unit_Size", "Min_Ground_Floor", "Notes",
-            ]
-            facebook = facebook[facebook["ID"].notna() & (facebook["ID"].astype(str).str.strip() != "")].reset_index(drop=True)
+            for col in ("ID", "Listing_URL", "City", "County", "Lot_Acres",
+                       "List_Price", "Notes"):
+                if col not in facebook.columns:
+                    facebook[col] = None
             facebook["List_Price"] = pd.to_numeric(facebook["List_Price"], errors="coerce")
             facebook["Lot_Acres"]  = pd.to_numeric(facebook["Lot_Acres"],  errors="coerce")
             facebook["Notes"]      = facebook["Notes"].astype(str).str.replace("\n", " ").replace("nan", "")
@@ -1516,14 +1585,13 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
 
         if not _ML_FILE.exists():
             st.warning(
-                "Manual listings file not found. Place **Potential Land New Process for AI Tool.xlsx** "
-                "in the project root folder.",
-            
+                "Manual listings file not found. Place **Manual Add Land Listings.xlsx** "
+                "in the project root folder."
             )
         else:
             ml_carwm, ml_facebook = load_manual_listings(str(_ML_FILE))
 
-            st.caption(f"Reading from **Potential Land New Process for AI Tool.xlsx** · {len(ml_carwm)} CARWM listings · {len(ml_facebook)} Facebook Marketplace listings")
+            st.caption(f"Reading from **Manual Add Land Listings.xlsx** · {len(ml_carwm)} CARWM listings · {len(ml_facebook)} Facebook Marketplace listings · refreshes automatically within 5 minutes of a saved edit")
 
             # ── Listings table ────────────────────────────────────────────────────────
             st.subheader(f"Listings  ({len(ml_carwm)})")

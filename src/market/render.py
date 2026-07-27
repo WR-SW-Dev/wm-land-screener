@@ -705,7 +705,12 @@ def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None,
     for f in feats:
         k = str(f["properties"]["key"])
         info = tiers.get(k, {"rank": None, "n": len(muni_df), "tier": "low"})
-        f["properties"]["tier"] = info["tier"]
+        # NOTE: named "demand_tier", not "tier" — "tier" is already used on this
+        # same feature to mean the GEOGRAPHIC level ("municipal"/"county"/
+        # "submarket", set in boundaries.py) and is what the map-click handler
+        # below keys off of. Reusing "tier" here silently broke click-to-select
+        # (the geographic marker got overwritten, so clicks never matched).
+        f["properties"]["demand_tier"] = info["tier"]
         f["properties"]["tier_label"] = _TIER_LABELS[info["tier"]]
         # Boundary NAME is just the base name ("Grand Haven") and can't tell a
         # city from its township; use the ACS-derived label ("Grand Haven
@@ -721,7 +726,7 @@ def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None,
         {"type": "FeatureCollection", "features": feats},
         name="Municipalities",
         style_function=lambda f: {
-            "fillColor": _TIER_COLORS[f["properties"]["tier"]],
+            "fillColor": _TIER_COLORS[f["properties"]["demand_tier"]],
             "color": "#2c3e3f", "weight": 1.0, "fillOpacity": 0.72,
         },
         highlight_function=lambda _f: {"weight": 3, "color": "#779FA1",

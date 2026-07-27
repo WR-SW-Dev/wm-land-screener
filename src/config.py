@@ -1,6 +1,7 @@
 """
 Central config: paths, bounding boxes, API endpoints, and zoning constants.
 """
+import math
 import os
 from pathlib import Path
 
@@ -128,6 +129,94 @@ DRAIN_MAINTYPE_COLORS = {
     "Siphon":       "#db2777",  # pink         — siphon
 }
 DRAIN_DEFAULT_COLOR = "#6b7280"  # gray — other / unspecified type
+
+# ── MDOT Roads & Highways — transportation accessibility (statewide) ────────
+# Michigan Roads & Highways v24 centerlines. NFC = National Functional
+# Classification (verified live against known roads: I-96/I-196 -> NFC 1,
+# US-31 -> NFC 2, local streets -> NFC 7/0/null). AADT/AADTYear are embedded
+# per-segment on this same layer — no separate traffic-volume service needed.
+# This is a minor, supportive "nice to know" signal, not a scored filter or a
+# cross-parcel comparison tool — see transportation.py for how it's used.
+MDOT_ROADS_SERVICE = (
+    "https://services2.arcgis.com/67lKNkQ2TO1I3lhR/arcgis/rest/services/"
+    "MDOT_RH_2024_GDB/FeatureServer/0/query"
+)
+MDOT_ROADS_WHERE = "NFC IN (1,2,3,4,5,6)"   # collector-and-above only; drop unclassified/local
+
+MDOT_NFC_LABELS = {
+    1: "Interstate",
+    2: "Freeway/Expressway",
+    3: "Principal Arterial",
+    4: "Minor Arterial",
+    5: "Major Collector",
+    6: "Minor Collector",
+}
+QUALIFYING_THOROUGHFARE_NFC = {1, 2, 3, 4}          # Tier 1 — arterial or above
+COLLECTOR_FALLBACK_NFC      = {1, 2, 3, 4, 5, 6}    # Tier 2 — used only if Tier 1 is >10mi away
+THOROUGHFARE_FALLBACK_RADIUS_MI = 10.0
+
+# "Regional highway" access = nearest Interstate OR Freeway/Expressway (NFC 1
+# or 2), found by functional classification — NOT a hardcoded list of named
+# routes. Revised from an earlier I-96/I-196-only design after checking real
+# Grand Haven data: US-31 (NFC 2) sits under 0.1mi from many parcels while
+# I-96 (NFC 1) is 5-7mi away, so a literal "nearest Interstate" answers a less
+# useful question than "nearest freeway-grade regional corridor" — and this
+# also means no per-city named-route list to maintain when Holland/Muskegon
+# (Phase 4) are added; whichever freeway/Interstate is actually closest wins.
+REGIONAL_HWY_NFC = {1, 2}
+
+# Single search radius for the roads fetch — sized to comfortably contain the
+# farther-out Interstate mainline search, which covers the 10-mile thoroughfare
+# fallback radius too. One bbox, one fetch, serves both metrics.
+TRANSPORT_ROAD_BBOX_BUFFER_MI = 35.0
+
+
+def _expand_bbox_miles(bbox: tuple, miles: float) -> tuple:
+    """Pad a WGS84 (min_lon, min_lat, max_lon, max_lat) bbox by `miles` in
+    every direction. Used to build a per-city transportation search box that's
+    larger than the tight parcel bbox, since the nearest Interstate can be
+    well outside a city's own parcel area."""
+    min_lon, min_lat, max_lon, max_lat = bbox
+    center_lat = (min_lat + max_lat) / 2
+    lat_deg = miles / 69.0
+    lon_deg = miles / (69.0 * math.cos(math.radians(center_lat)))
+    return (min_lon - lon_deg, min_lat - lat_deg, max_lon + lon_deg, max_lat + lat_deg)
+
+
+# Transportation score weights/bands (internal only — drives the plain-
+# language rating badge, e.g. "Very Good"; the numeric 0-100 is never shown
+# in the UI, since a synthetic composite score means little without a
+# breakdown, and distance here is a straight-line proxy, not real drive time).
+# Weight keys are unit-agnostic (no "_mi") so the underlying metric could
+# change without touching this map.
+TRANSPORT_SCORE_WEIGHTS = {
+    "thoroughfare_proximity": 40,   # distance to nearest major thoroughfare
+    "aadt":                   30,   # traffic volume
+    "functional_class":       20,   # road classification
+    "regional_hwy_proximity": 10,   # distance to nearest Interstate/Freeway (NFC 1-2)
+}
+# Normalization bands: (value_at_score_0, value_at_score_1), clamped [0,1] —
+# same convention as DEMAND_BANDS. Closer/busier = better, so distance bands
+# are inverted (high value -> 0).
+TRANSPORT_SCORE_BANDS = {
+    "thoroughfare_dist_mi":   (10.0, 0.0),   # 10mi+ -> 0 ; 0mi -> 1
+    "aadt":                   (500, 25000),  # <=500 vpd -> 0 ; 25k+ vpd -> 1
+    # Rescaled from an earlier (30.0, 2.0) band that assumed "distance to a
+    # true Interstate" (typically 2-30mi). Now that this searches NFC 1-2
+    # generically (often a much closer freeway like US-31), a 30mi ceiling
+    # would leave nearly every parcel maxed out and this component
+    # uninformative — 15mi is a more realistic starting range; tune later
+    # once real numbers are visible across more cities.
+    "regional_hwy_dist_mi":   (15.0, 0.0),
+}
+# Functional class is categorical, not banded — points scaled to the 20pt weight.
+MDOT_FUNCTIONAL_CLASS_POINTS = {1: 20, 2: 16, 3: 12, 4: 8, 5: 4, 6: 2}  # default 0
+
+# Rating bands — fixed thresholds; produce only the badge label, never a
+# displayed number.
+TRANSPORT_RATING_BANDS = [
+    (90, "Excellent"), (75, "Very Good"), (60, "Good"), (40, "Fair"), (0, "Limited"),
+]
 
 # ── Parcel filtering thresholds ───────────────────────────────────────────────
 MIN_ACRES            = 2.0     # hard filter: below this is too small
@@ -387,6 +476,13 @@ CITIES = {
     #              "zoning_table": {}, "flu_service": None, "flu_code_field": None,
     #              "flu_lu_table": {}},
 }
+
+# Auto-derive a transportation search bbox for every active CITIES entry —
+# this is the entire city-agnostic mechanism for the transportation feature.
+# Holland/Muskegon (Phase 4) get a correctly-sized road_bbox automatically the
+# moment they're uncommented above, with zero new code.
+for _city_key, _city_cfg in CITIES.items():
+    _city_cfg["road_bbox"] = _expand_bbox_miles(_city_cfg["bbox"], TRANSPORT_ROAD_BBOX_BUFFER_MI)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # SECTION 1 — MARKET FEASIBILITY (Phase 1.1: demographics & affordability)

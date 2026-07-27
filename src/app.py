@@ -217,6 +217,17 @@ COLOR_MED    = "#f59e0b"   # amber
 COLOR_LOW    = "#ef4444"   # red
 COLOR_STROKE = "#2c3e3f"   # WR-Dev dark
 
+# Transportation accessibility rating badge (minor, supportive signal — see
+# transportation.py; only the plain-language rating is ever shown, never the
+# underlying 0-100 score)
+TRANSPORT_RATING_COLORS = {
+    "Excellent":  "#16a34a",
+    "Very Good":  "#22c55e",
+    "Good":       "#eab308",
+    "Fair":       "#f97316",
+    "Limited":    "#ef4444",
+}
+
 # Parcel tracker
 TRACKER_FILE   = ROOT / "data" / "tracker.json"
 STATUS_OPTIONS = ["Not contacted", "Pursuing", "Backburner", "No"]
@@ -632,6 +643,61 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         else:
             flu_row = ""
 
+        # Transportation accessibility — minor, supportive signal, not a
+        # scored filter (see transportation.py). Only the plain-language
+        # rating is shown, never the underlying 0-100 score.
+        _t_name = str(row.get("thoroughfare_name", "") or "")
+        if _t_name:
+            _t_rating = str(row.get("transportation_rating", "") or "")
+            _t_color  = TRANSPORT_RATING_COLORS.get(_t_rating, "#9ca3af")
+            _t_badge  = (
+                f"<span style='background:{_t_color};color:#fff;font-size:11px;"
+                f"font-weight:600;padding:2px 8px;border-radius:10px;'>{_t_rating}</span>"
+                if _t_rating else ""
+            )
+            _t_class = str(row.get("thoroughfare_class", "") or "")
+            # Coerce to numeric at this file-read boundary — data/output files
+            # on disk are outside this process's control, and a non-numeric
+            # value here would otherwise crash the ":.1f" formatting below.
+            _t_dist  = pd.to_numeric(row.get("thoroughfare_dist_mi"), errors="coerce")
+            _t_aadt  = pd.to_numeric(row.get("thoroughfare_aadt"), errors="coerce")
+            _t_year  = pd.to_numeric(row.get("thoroughfare_aadt_year"), errors="coerce")
+            _r_name  = str(row.get("regional_hwy_name", "") or "")
+            _r_class = str(row.get("regional_hwy_class", "") or "")
+            _r_dist  = pd.to_numeric(row.get("regional_hwy_dist_mi"), errors="coerce")
+
+            _thoroughfare_disp = f"{_t_name} — {_t_class}" if _t_class else _t_name
+            if pd.notna(_t_dist):
+                _thoroughfare_disp += f" ({_t_dist:.1f} mi)"
+
+            if pd.notna(_t_aadt):
+                _aadt_disp = f"{int(_t_aadt):,} vpd"
+                if pd.notna(_t_year):
+                    _aadt_disp += f" ({int(_t_year)})"
+            else:
+                _aadt_disp = "not available"
+
+            # Nearest Interstate-OR-Freeway/Expressway by classification, not
+            # a hardcoded named-route list — so this correctly shows US-31
+            # for Grand Haven (its real regional corridor) rather than only
+            # ever reporting distance to I-96/I-196.
+            if _r_name and pd.notna(_r_dist):
+                _regional_disp = f"{_r_name} — {_r_class} ({_r_dist:.1f} mi)" if _r_class else f"{_r_name} ({_r_dist:.1f} mi)"
+            else:
+                _regional_disp = "—"
+
+            transport_row = f"""
+    <tr><td style="color:#888;">Transportation</td>
+        <td colspan="2">{_t_badge}</td></tr>
+    <tr><td style="color:#888;">Thoroughfare</td>
+        <td colspan="2">{_thoroughfare_disp}</td></tr>
+    <tr><td style="color:#888;">Traffic (AADT)</td>
+        <td colspan="2">{_aadt_disp}</td></tr>
+    <tr><td style="color:#888;">Regional Highway</td>
+        <td colspan="2">{_regional_disp}</td></tr>"""
+        else:
+            transport_row = ""
+
         # Review flag banner — only shown for assessor-improved flag, not zoning flags
         _review_reasons = str(row.get("review_reasons", "") or "")
         _assessor_flag  = "Assessor says improved" in _review_reasons
@@ -677,6 +743,7 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         <td colspan="2">{mf} / {adu}</td></tr>
     {flu_row}
     {f"<tr><td style='color:#888;'>Soil</td><td colspan='2'>{soil_1}</td></tr>" if soil_1 else ""}
+    {transport_row}
   </table>
   {reqs_block}
   <hr style="margin:6px 0;">

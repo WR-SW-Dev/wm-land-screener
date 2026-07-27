@@ -23,7 +23,7 @@ from config import (
 )
 from data_loader import (
     load_parcels, load_zoning, load_flood_zones, load_wetlands,
-    load_buildings, load_future_landuse, load_soils, load_drains,
+    load_buildings, load_future_landuse, load_soils, load_drains, load_roads,
 )
 from overlay import (
     add_parcel_area, add_zoning, add_flood_coverage, add_wetland_coverage,
@@ -31,6 +31,30 @@ from overlay import (
     add_soil_info,
 )
 from scoring import add_scores, SCORE_COMPONENTS
+from transportation import (
+    add_nearest_thoroughfare, add_nearest_regional_highway, add_transportation_score,
+)
+
+# Transportation accessibility columns (minor/supportive signal — see
+# transportation.py). Defined separately from OUTPUT_COLS because run_city()
+# only computes these for parcels that pass the hard filters — everyone else
+# gets them left blank rather than spatial-joined for no reason. Split by
+# dtype (not just initialized with a blanket `None`) so the resulting column
+# stays float64/str consistently — an object-dtype column with mixed None/
+# float values gets written to GeoJSON as strings on the numeric fields,
+# which then breaks app.py's `f"{val:.1f}"` formatting on read-back.
+TRANSPORT_NUMERIC_COLS = [
+    "thoroughfare_nfc", "thoroughfare_dist_mi", "thoroughfare_aadt", "thoroughfare_aadt_year",
+    "regional_hwy_dist_mi",
+    "pts_thoroughfare_proximity", "pts_aadt", "pts_functional_class", "pts_regional_hwy_proximity",
+    "transportation_access_score",
+]
+TRANSPORT_STR_COLS = [
+    "thoroughfare_name", "thoroughfare_route", "thoroughfare_class",
+    "thoroughfare_fallback_tier", "regional_hwy_name", "regional_hwy_class",
+    "transportation_rating",
+]
+TRANSPORT_COLS = TRANSPORT_NUMERIC_COLS + TRANSPORT_STR_COLS
 
 # Columns to include in the output CSV (order matters for readability)
 OUTPUT_COLS = [
@@ -47,6 +71,8 @@ OUTPUT_COLS = [
     # Future Land Use / master plan
     "future_lu_code", "future_lu_label", "future_max_units",
     "rezoning_upside", "rezoning_delta",
+    # Transportation accessibility (minor/supportive signal — see transportation.py)
+    *TRANSPORT_COLS,
     # Scoring
     "pass_filter", "filter_reason", "score",
     "pts_density", "pts_rezoning", "pts_wetland", "pts_flood", "pts_shape",
@@ -104,6 +130,12 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
     print("\n[7/7] Loading USDA NRCS soil data...")
     soils = load_soils(bbox, city_key, force_download)
 
+    # Transportation accessibility (MDOT roads — statewide, buffered bbox
+    # since nearest-Interstate search needs a wider radius than the tight
+    # parcel bbox). No county gating — unlike drains, MDOT covers every county.
+    print("  Loading MDOT roads (transportation accessibility)...")
+    roads = load_roads(city_cfg.get("road_bbox", bbox), city_key, force_download)
+
     # ── 2. Overlays ───────────────────────────────────────────────────────────
     print("\n[8/8] Running overlays and scoring...")
     parcels = add_parcel_area(parcels)
@@ -122,6 +154,29 @@ def run_city(city_key: str, city_cfg: dict, force_download: bool = False):
 
     # ── 3. Score ──────────────────────────────────────────────────────────────
     parcels = add_scores(parcels, zoning_table=zoning_table, city_key=city_key, min_acres=min_acres)
+
+    # Transportation accessibility — independent of the land score, but only
+    # computed for parcels that pass the hard filters (i.e. actual candidates
+    # under consideration). The spatial joins scale with parcel count, so
+    # running this on every scanned parcel (thousands) instead of just the
+    # handful that qualify would be pure waste for a minor, supportive signal.
+    for c in TRANSPORT_NUMERIC_COLS:
+        parcels[c] = float("nan")
+    for c in TRANSPORT_STR_COLS:
+        parcels[c] = ""
+    qualifying_mask = parcels["pass_filter"] == True
+    if qualifying_mask.any():
+        scored = add_nearest_thoroughfare(parcels.loc[qualifying_mask], roads)
+        scored = add_nearest_regional_highway(scored, roads)
+        scored = add_transportation_score(scored)
+        # Assign per-column (not one bulk `.values` block) so each column
+        # keeps a consistent dtype — float64 for numeric, str for text —
+        # instead of collapsing to a mixed object column that GeoJSON writes
+        # out as strings.
+        for c in TRANSPORT_NUMERIC_COLS:
+            parcels.loc[qualifying_mask, c] = pd.to_numeric(scored[c], errors="coerce").values
+        for c in TRANSPORT_STR_COLS:
+            parcels.loc[qualifying_mask, c] = scored[c].fillna("").astype(str).values
 
     # ── 4. Identify useful ID/address columns ─────────────────────────────────
     # Grand Haven city fields (after lowercasing): PARCELNUMB / PIN, ADDRESS / PROPSTREET, OWNERNAME

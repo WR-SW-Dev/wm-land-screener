@@ -26,6 +26,8 @@ from config import (
     EGLE_WETLAND_SERVICE,
     OTTAWA_DRAINS_SERVICE,
     OTTAWA_DRAINS_WHERE,
+    MDOT_ROADS_SERVICE,
+    MDOT_ROADS_WHERE,
 )
 
 # ── ArcGIS REST helper ────────────────────────────────────────────────────────
@@ -271,6 +273,41 @@ def load_drains(bbox: tuple, city_key: str, force_download: bool = False) -> gpd
     gdf.columns = [c.lower() for c in gdf.columns]
     gdf.to_file(cache, driver="GeoJSON")
     print(f"  Saved {len(gdf)} county drain segments to {cache.name}")
+    return gdf
+
+
+# ── MDOT Roads & Highways (transportation accessibility) ───────────────────────
+
+def load_roads(bbox: tuple, city_key: str, force_download: bool = False) -> gpd.GeoDataFrame:
+    """
+    Fetch MDOT Roads & Highways segments (collector-and-above only, NFC 1-6).
+    Carries NFC (functional class), FENAME (road name), RT1 (route number),
+    and AADT/AADTYear (traffic volume) embedded per-segment — no separate
+    traffic-volume service needed. Statewide service; bbox should be the
+    city's buffered "road_bbox" (config._expand_bbox_miles), not the tight
+    parcel bbox, since nearest-thoroughfare and nearest-Interstate searches
+    need a wider radius. Caches to data/raw/<city_key>_roads.geojson.
+    """
+    cache = DATA_RAW / f"{city_key}_roads.geojson"
+
+    if cache.exists() and not force_download:
+        print(f"  Loading roads from cache: {cache.name}")
+        return gpd.read_file(cache)
+
+    print(f"  Downloading MDOT roads for {city_key} ...")
+    gdf = _arcgis_query(
+        MDOT_ROADS_SERVICE, bbox,
+        extra_params={"where": MDOT_ROADS_WHERE},
+        max_records=2000,
+    )
+
+    if gdf.empty:
+        print("  [info] No MDOT road segments found in area")
+        return gdf
+
+    gdf.columns = [c.lower() for c in gdf.columns]
+    gdf.to_file(cache, driver="GeoJSON")
+    print(f"  Saved {len(gdf)} road segments to {cache.name}")
     return gdf
 
 

@@ -413,7 +413,7 @@ GRAND_HAVEN_FUTURE_LU = {
 CITIES = {
     # ── Grand Haven city ──────────────────────────────────────────────────────
     "grand_haven": {
-        "label":          "Grand Haven",
+        "label":          "City of Grand Haven",
         "bbox":           (-86.28, 43.020, -86.18, 43.095),
         "county":         "ottawa",
         "min_acres":      1.5,   # dense urban core — 2.0 yielded 0 vacant parcels; 1.5 floor (smaller = not developable for WR-Dev)

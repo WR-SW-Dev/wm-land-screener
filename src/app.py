@@ -798,7 +798,10 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         _authenticator.logout(button_name="Log out", location="sidebar")
         st.divider()
 
-        # City selector
+        # City selector — st.selectbox (compact, collapsed by default).
+        # Its type-to-filter search felt odd with only 3 options, but
+        # scales well once more municipalities are added — no built-in
+        # Streamlit widget offers "compact + zero search" at once.
         city_options = {v["label"]: k for k, v in CITIES.items()}
         selected_label = st.selectbox("City / Area", list(city_options.keys()))
         city_key = city_options[selected_label]
@@ -899,9 +902,8 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
     tracker = load_tracker()
 
     # ── Main content ──────────────────────────────────────────────────────────────
-    _logo_path = ROOT / "assets" / "wr_dev_logo.png"
-    if _logo_path.exists():
-        st.logo(str(_logo_path), size="large")
+    # (No st.logo() here — the header-bar logo is hidden entirely on this
+    # page per request; see app_shell.py.)
     st.title(f"{city_cfg['label']} — Vacant Land Screener")
 
     if df_all is None:

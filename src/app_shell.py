@@ -250,6 +250,21 @@ def render_market():
 
 
 def render_land():
+    # Hide the global header-bar logo (set once, above, for every section) on
+    # this page only — per request, the Land Screener shows no WR-Dev logo
+    # at all (unlike Market Feasibility / Financial Review, which still get it).
+    # Also reset the top padding Streamlit reserves above the main content
+    # (stMainBlockContainer defaults to 96px top padding, meant to leave room
+    # for a logo overlapping the page — confirmed via computed styles in a
+    # throwaway repro app, not guessed). With no logo on this page, that
+    # default padding just reads as a large empty gap above the stepper.
+    st.markdown(
+        """<style>
+        img.stLogo, [data-testid='stHeaderLogo'] { display: none !important; }
+        [data-testid='stMainBlockContainer'] { padding-top: 2rem !important; }
+        </style>""",
+        unsafe_allow_html=True,
+    )
     # Carry-forward (submarket → land) is wired in a later step. For now, embed
     # the real Land Screener exactly as-is via app.render_land().
     sm = st.session_state.submarket

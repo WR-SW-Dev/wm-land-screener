@@ -225,9 +225,14 @@ def momentum_badge(county_key: str, fred_data: dict, needs_row) -> dict | None:
     else:
         color, label = "green", "Saturating"
 
+    # Annual pace needed to close the gap by the end of the study period —
+    # used as a reference line on the permits chart (see render.py).
+    annual_pace = total_need / (end_year - start_year + 1)
+
     return {"pct": pct, "color": color, "label": label,
             "cumulative_permits": cumulative, "total_need": total_need,
-            "study_period": study_period}
+            "study_period": study_period, "start_year": start_year,
+            "end_year": end_year, "annual_pace": annual_pace}
 
 
 if __name__ == "__main__":

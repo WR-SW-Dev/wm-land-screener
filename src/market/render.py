@@ -508,6 +508,15 @@ def _build_county_map(bounds, needs, value_col, caption, pins=None, oz_fc=None):
         },
         highlight_function=lambda _f: {"weight": 3, "color": "#779FA1",
                                        "fillOpacity": 0.85},
+        # Reverted from a click-to-open popup back to a plain hover tooltip —
+        # two attempts at a "sticky" on-map popup (GeoJsonPopup, then a
+        # per-feature Popup with show=True) both failed in the live app
+        # despite passing direct HTML-generation checks, matching the same
+        # folium/streamlit-folium click-reliability fragility already
+        # documented elsewhere in this app. Not worth continuing to fight —
+        # the working "Go to municipal breakdown" button + county data panel
+        # below the map (a separate piece, unaffected by this) already
+        # covers the same need.
         tooltip=folium.GeoJsonTooltip(
             fields=["label", "total_units", "rental_units"],
             aliases=["County:", "Total units needed:", "Rental units needed:"],
@@ -521,32 +530,81 @@ def _build_county_map(bounds, needs, value_col, caption, pins=None, oz_fc=None):
 
 
 def _render_rental_by_income(county_key, needs_raw):
-    """Bar chart + table of the county's rental gap by AMI/rent band."""
+    """Bar chart + table of the county's housing gap by AMI band — toggle
+    between Rental, For-sale, and Total (both combined). Combining is exact,
+    not approximate: each county's report bands rental and for-sale demand
+    into the SAME AMI cutoffs (see housing_needs.py docstring), so summing
+    matching bands is a legitimate "total units needed" breakdown, not a
+    mismatched-bucket estimate."""
     import altair as alt
     from market.housing_needs import HOUSING_NEEDS
-    bands = HOUSING_NEEDS[county_key]["rental_by_income"]
-    bdf = pd.DataFrame(bands)
-    # Short AMI-band labels (rent range stays in tooltip + table) so the x-axis
-    # reads horizontally with no rotation or truncation.
-    order = bdf["ami"].tolist()
-    st.markdown("**Rental units needed by income / rent band**")
-    chart = (
+    record = HOUSING_NEEDS[county_key]
+    rental_bands = record["rental_by_income"]
+    forsale_bands = record.get("forsale_by_income")
+    order = [b["ami"] for b in rental_bands]
+
+    st.markdown("**Units needed by income band**")
+    if forsale_bands:
+        tenure = st.radio("View", ["Rental", "For-sale", "Total"], horizontal=True,
+                          key=f"tenure_{county_key}", label_visibility="collapsed")
+    else:
+        tenure = "Rental"  # graceful fallback if a future county lacks for-sale-by-income data
+
+    rdf = pd.DataFrame(rental_bands).rename(columns={"units": "rental_units"})
+    if forsale_bands:
+        fdf = pd.DataFrame(forsale_bands).rename(columns={"units": "forsale_units"})
+        bdf = rdf.merge(fdf, on="ami", how="outer")
+    else:
+        bdf = rdf.assign(forsale_units=0, price=None)
+    bdf["total_units"] = bdf["rental_units"] + bdf["forsale_units"]
+
+    col, y_title = {
+        "Rental":   ("rental_units", "Rental units needed"),
+        "For-sale": ("forsale_units", "For-sale units needed"),
+        "Total":    ("total_units", "Total units needed"),
+    }[tenure]
+    # Each band's share of the currently-selected view's total, for the
+    # on-bar label. Worded "X% of need" (never a bare "%") so it can't be
+    # confused with the x-axis's AMI-band percentages, which are unrelated.
+    bdf["pct_label"] = (bdf[col] / bdf[col].sum() * 100).round(0).astype(int).astype(str) + "% of need"
+
+    tooltip = [alt.Tooltip("ami", title="% of median income")]
+    if tenure == "Rental":
+        tooltip.append(alt.Tooltip("rent", title="Monthly rent"))
+    elif tenure == "For-sale":
+        tooltip.append(alt.Tooltip("price", title="Price point"))
+    else:
+        tooltip += [alt.Tooltip("rent", title="Monthly rent (rental)"),
+                    alt.Tooltip("price", title="Price point (for-sale)")]
+    tooltip.append(alt.Tooltip(f"{col}:Q", title="Units needed", format=","))
+
+    bars = (
         alt.Chart(bdf)
         .mark_bar(color="#779FA1")
         .encode(
             x=alt.X("ami:N", sort=order, title="% of area median income",
                     axis=alt.Axis(labelAngle=0, labelLimit=1000, labelPadding=6)),
-            y=alt.Y("units:Q", title="Units needed"),
-            tooltip=[alt.Tooltip("ami", title="% of median income"),
-                     alt.Tooltip("rent", title="Monthly rent"),
-                     alt.Tooltip("units", title="Units needed", format=",")],
+            y=alt.Y(f"{col}:Q", title=y_title,
+                    scale=alt.Scale(domain=[0, bdf[col].max() * 1.15])),
+            tooltip=tooltip,
         )
         .properties(height=240)
     )
-    tbl = (bdf.rename(columns={"ami": "% of median income", "rent": "Monthly rent",
-                               "units": "Units needed"})
-              [["% of median income", "Monthly rent", "Units needed"]]
-              .style.format({"Units needed": "{:,.0f}"}))
+    labels = bars.mark_text(dy=-8, color="#555", fontSize=11).encode(text="pct_label:N")
+    chart = bars + labels
+
+    if tenure == "Total":
+        tbl = (bdf.rename(columns={"ami": "% of median income", "rental_units": "Rental units",
+                                   "forsale_units": "For-sale units", "total_units": "Total units"})
+                  [["% of median income", "Rental units", "For-sale units", "Total units"]]
+                  .style.format({"Rental units": "{:,.0f}", "For-sale units": "{:,.0f}",
+                                 "Total units": "{:,.0f}"}))
+    else:
+        range_col, range_label = ("rent", "Monthly rent") if tenure == "Rental" else ("price", "Price point")
+        tbl = (bdf.rename(columns={"ami": "% of median income", range_col: range_label,
+                                   col: "Units needed"})
+                  [["% of median income", range_label, "Units needed"]]
+                  .style.format({"Units needed": "{:,.0f}"}))
 
     # Side by side, centered: equal spacer columns keep the pair off the edges
     # and each element ~40% wide (readable, not stretched across the screen).
@@ -613,7 +671,35 @@ def _render_market_pricing(county_key, needs_row, fred):
                 )
                 .properties(height=220)
             )
-            st.altair_chart(pchart, use_container_width=True)
+            # Reference line at the annual pace needed to close the HNA gap
+            # by the end of the study period — bars below the line are
+            # falling behind that pace, making the gap visible directly on
+            # the chart rather than only in the badge text below. Clipped to
+            # the study-period years that actually appear on this chart (via
+            # x/x2, not a plain full-width rule) — the pace figure is only
+            # meaningful within that county's own study period, so drawing
+            # it across the whole 10-year history would wrongly imply the
+            # same target applied to years like 2016.
+            study_years = [str(y) for y in range(badge["start_year"], badge["end_year"] + 1)] if badge else []
+            chart_years = sorted(y for y in pdf["year"] if y in study_years)
+            if badge and chart_years:
+                rule = (
+                    alt.Chart(pd.DataFrame({
+                        "x_start": [chart_years[0]], "x_end": [chart_years[-1]],
+                        "pace": [badge["annual_pace"]],
+                    }))
+                    .mark_rule(color="#9ca3af", strokeDash=[6, 4], size=2)
+                    .encode(x="x_start:N", x2="x_end:N", y=alt.Y("pace:Q"))
+                )
+                pchart = pchart + rule
+                st.altair_chart(pchart, use_container_width=True)
+                st.caption(
+                    f"Dashed line ({chart_years[0]}–{chart_years[-1]}) = "
+                    f"**{badge['annual_pace']:,.0f}/yr** pace needed to close the "
+                    f"gap within the {badge['study_period']} study period."
+                )
+            else:
+                st.altair_chart(pchart, use_container_width=True)
         if badge:
             dot = {"red": "🔴", "yellow": "🟡", "green": "🟢"}[badge["color"]]
             st.markdown(f"{dot} **{badge['label']}** — permits issued in "
@@ -1237,15 +1323,26 @@ def render_market(view: str, on_continue):
     sel_label = st.session_state.get("submarket") or "Grand Haven"
 
     # Zoom state machine: "counties" overview, or a county key (zoomed to municipalities).
+    # selected_county_key tracks which county's detail panel shows beneath the
+    # county map — separate from market_level, which only changes when the
+    # user explicitly clicks "Go to municipal breakdown". This is what makes
+    # a county click "stick" (show detail in place) instead of navigating away.
     level = st.session_state.setdefault("market_level", "counties")
+    st.session_state.setdefault("selected_county_key", None)
     st.session_state.setdefault("county_map_nonce", 0)
 
-    def _zoom_to(county_key):
+    def _select_county(county_key):
+        st.session_state.selected_county_key = county_key
+        st.session_state.county_map_nonce += 1   # fresh map/selectbox widgets → no stale click/pick replay
+
+    def _zoom_to_municipal(county_key):
         st.session_state.market_level = county_key
 
     def _back_to_counties():
         st.session_state.market_level = "counties"
-        st.session_state.county_map_nonce += 1   # fresh county map → no stale click
+        st.session_state.county_map_nonce += 1
+        # selected_county_key intentionally left as-is — "Back" returns to
+        # that same county's detail panel, not a blank map.
 
     if view == "Executive":
         if level == "counties":
@@ -1253,7 +1350,7 @@ def render_market(view: str, on_continue):
             st.caption("🟩 less need → 🟥 more need · shading = **total units "
                        "needed per 1,000 households** (size-normalized so a big "
                        "county isn't red just for being big). Hover for the "
-                       "figures; **click a county to zoom into its municipalities**.")
+                       "figures; **click a county to see its details below**.")
 
             t1, t2, _ = st.columns([1, 1, 2])
             show_pins = t1.checkbox(
@@ -1279,15 +1376,31 @@ def render_market(view: str, on_continue):
                 key=f"county_map_{nonce}", returned_objects=["last_active_drawing"])
             clicked = (map_out or {}).get("last_active_drawing")
             if clicked and clicked.get("properties", {}).get("tier") == "county":
-                _zoom_to(clicked["properties"]["key"])
+                _select_county(clicked["properties"]["key"])
                 st.rerun()
 
-            # Selectbox fallback (accessibility / no-click drill-in).
-            pick = st.selectbox("…or choose a county to zoom in",
-                                ["—"] + county_labels, key="county_pick")
+            # Selectbox fallback (accessibility / no-click select) — same
+            # click-to-select behavior as the map (sticks, doesn't navigate
+            # away), sharing the same reset nonce so neither widget can hand
+            # back a stale pick and fight with the other on rerun.
+            pick = st.selectbox("…or choose a county to view details",
+                                ["—"] + county_labels, key=f"county_pick_{nonce}")
             if pick != "—":
-                _zoom_to(county_keys[county_labels.index(pick)])
+                _select_county(county_keys[county_labels.index(pick)])
                 st.rerun()
+
+            # County detail panel, beneath the map — shows once a county is
+            # selected (via click or the dropdown) and stays put. This is
+            # ALL county-level data now (moved out of the municipal
+            # breakdown below, to avoid showing it in two places).
+            selected_key = st.session_state.selected_county_key
+            if selected_key:
+                st.divider()
+                sel_county_label = label_by_key.get(selected_key, selected_key)
+                st.markdown(f"##### {sel_county_label} — county detail")
+                st.button("Go to municipal breakdown →", on_click=_zoom_to_municipal,
+                          args=(selected_key,))
+                _render_county_drilldown(selected_key, needs, df, fred=fred)
 
         else:  # zoomed into a county → municipal view
             county_key = level
@@ -1332,18 +1445,18 @@ def render_market(view: str, on_continue):
                             "features": [f for f in oz["features"]
                                         if f["properties"].get("county_key") == county_key]}
 
-            # Municipal heat map goes FIRST — same spot the county map occupied,
-            # so zooming in feels continuous rather than making the map "vanish".
+            # Municipal heat map occupies the same spot the county map did,
+            # so zooming in feels continuous rather than making the map
+            # "vanish". County-level data (need/pricing/demographics) no
+            # longer repeats here — it lives in the county detail panel,
+            # one "Back to counties" click away (see the "counties" branch
+            # above), so it isn't shown in two places.
             picked = _render_municipalities(county_key,
                                             muni, muni_bounds, pins=pins,
                                             competition_pins_list=comp_pins,
                                             oz_fc=county_oz)
             if picked:
                 sel_label = picked
-
-            # County housing-need + demographics below, as supporting context.
-            st.divider()
-            _render_county_drilldown(county_key, needs, df, fred=fred)
 
     else:  # Analyst — full tables
         sel_label = st.selectbox("Carry submarket into Land Screener",

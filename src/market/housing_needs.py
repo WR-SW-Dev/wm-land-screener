@@ -8,9 +8,16 @@ that Ottawa/Kent are 2024–2029 and Allegan/Muskegon are 2022–2027).
 
 Each county's total gap = rental + for-sale units needed over the 5-year period.
 `rental_by_income` breaks the rental gap into the report's own AMI/rent bands
-(Ottawa & Allegan use 4 bands; Kent & Muskegon use 5). Kent is reported as two
+(Ottawa & Allegan use 4 bands; Kent & Muskegon use 5). `forsale_by_income`
+breaks the for-sale gap into the SAME AMI bands (paired with price points
+instead of rents) — each county's report bands both tenures identically, so
+rental_by_income[i]["units"] + forsale_by_income[i]["units"] is a legitimate
+per-band "total units needed", not an approximation. Kent is reported as two
 areas (Grand Rapids + Balance-of-County); the values here are the county total
-(the sum of both), which matches the report's own summed figures.
+(the sum of both), which matches the report's own summed figures — confirmed
+for for-sale too: Grand Rapids ($106,400/$177,333/$283,733/$425,600 price
+breaks) and Balance-of-County use identical price bands, so summing is exact,
+not a mismatched-bucket approximation.
 
 Public API:
     HOUSING_NEEDS                       # raw dict keyed by county key
@@ -33,6 +40,12 @@ HOUSING_NEEDS = {
             {"ami": "81–120%", "rent": "$2,056–$3,084",  "units": 400},
             {"ami": "121%+",   "rent": "$3,085+",        "units": 252},
         ],
+        "forsale_by_income": [
+            {"ami": "≤50%",    "price": "≤ $171,333",         "units": 259},
+            {"ami": "51–80%",  "price": "$171,334–$274,133",  "units": 2_794},
+            {"ami": "81–120%", "price": "$274,134–$411,200",  "units": 6_973},
+            {"ami": "121%+",   "price": "$411,201+",          "units": 2_500},
+        ],
     },
     "kent": {
         "label": "Kent County",
@@ -47,6 +60,16 @@ HOUSING_NEEDS = {
             {"ami": "51–80%",  "rent": "$1,331–$2,128",  "units": 3_248},
             {"ami": "81–120%", "rent": "$2,129–$3,192",  "units": 2_691},
             {"ami": "121%+",   "rent": "$3,193+",        "units": 1_969},
+        ],
+        # Grand Rapids (6,333) + Balance of Kent County (15,806) = 22,139,
+        # summed per band — both areas use identical price bands (2025 HUD
+        # limits for the Grand Rapids-Wyoming MSA), so this is exact.
+        "forsale_by_income": [
+            {"ami": "≤30%",    "price": "≤ $106,400",         "units": 0},
+            {"ami": "31–50%",  "price": "$106,401–$177,333",  "units": 1_425},
+            {"ami": "51–80%",  "price": "$177,334–$283,733",  "units": 6_328},
+            {"ami": "81–120%", "price": "$283,734–$425,600",  "units": 7_506},
+            {"ami": "121%+",   "price": "$425,601+",          "units": 6_880},
         ],
     },
     "muskegon": {
@@ -63,6 +86,13 @@ HOUSING_NEEDS = {
             {"ami": "81–120%", "rent": "$1,514–$2,271",  "units": 460},
             {"ami": "121%+",   "rent": "$2,272+",        "units": 484},
         ],
+        "forsale_by_income": [
+            {"ami": "≤30%",    "price": "≤ $75,700",         "units": 519},
+            {"ami": "31–50%",  "price": "$75,701–$126,167",  "units": 239},
+            {"ami": "51–80%",  "price": "$126,168–$201,867", "units": 624},
+            {"ami": "81–120%", "price": "$201,868–$302,800", "units": 2_420},
+            {"ami": "121%+",   "price": "$302,801+",         "units": 2_339},
+        ],
     },
     "allegan": {
         "label": "Allegan County",
@@ -76,6 +106,12 @@ HOUSING_NEEDS = {
             {"ami": "51–80%",  "rent": "$1,097–$1,754",  "units": 355},
             {"ami": "81–120%", "rent": "$1,755–$2,847",  "units": 395},
             {"ami": "121%+",   "rent": "$2,848+",        "units": 146},
+        ],
+        "forsale_by_income": [
+            {"ami": "≤50%",    "price": "≤ $146,166",         "units": 219},
+            {"ami": "51–80%",  "price": "$146,167–$233,866",  "units": 709},
+            {"ami": "81–120%", "price": "$233,867–$379,600",  "units": 1_657},
+            {"ami": "121%+",   "price": "$379,601+",          "units": 1_744},
         ],
     },
 }

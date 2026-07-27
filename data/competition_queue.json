@@ -730,7 +730,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "7a403bd49f58": {
     "id": "7a403bd49f58",
@@ -743,7 +743,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "9954bc2a76cb": {
     "id": "9954bc2a76cb",
@@ -756,7 +756,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "90300b561c04": {
     "id": "90300b561c04",
@@ -769,7 +769,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "48a81657c3df": {
     "id": "48a81657c3df",
@@ -782,7 +782,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "bf1402092cbc": {
     "id": "bf1402092cbc",
@@ -795,7 +795,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "d71134e9e3a4": {
     "id": "d71134e9e3a4",
@@ -808,7 +808,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "d7839bff5278": {
     "id": "d7839bff5278",
@@ -821,7 +821,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "88ef6aa62ca2": {
     "id": "88ef6aa62ca2",
@@ -834,7 +834,7 @@
     "submarket_label": "Grand Haven",
     "stage": "planned",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "b80e36c88677": {
     "id": "b80e36c88677",
@@ -847,7 +847,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "a9198332b014": {
     "id": "a9198332b014",
@@ -860,7 +860,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "a14de9c282d3": {
     "id": "a14de9c282d3",
@@ -873,7 +873,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "86596eac2f8c": {
     "id": "86596eac2f8c",
@@ -886,7 +886,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "54c56c1e7027": {
     "id": "54c56c1e7027",
@@ -899,7 +899,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "60d4646e7a45": {
     "id": "60d4646e7a45",
@@ -912,7 +912,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "8f6650c96583": {
     "id": "8f6650c96583",
@@ -925,7 +925,7 @@
     "submarket_label": "Grand Haven",
     "stage": "proposed",
     "is_direct_competitor": false,
-    "status": "pending"
+    "status": "rejected"
   },
   "da433cb4b264": {
     "id": "da433cb4b264",
@@ -1191,5 +1191,18 @@
     "construction_start": "",
     "construction_end": "",
     "notes": ""
+  },
+  "4bf71554c32c": {
+    "id": "4bf71554c32c",
+    "title": "Plainfield Township weighs zoning changes to allow ADUs, more townhomes - Crain's Grand Rapids Business",
+    "link": "https://news.google.com/rss/articles/CBMiyAFBVV95cUxOckVLSkNGWGYybXJuSkFwSkVUeTJOWVVDaFJOOEgwaTk4TVptamxVRER5WUxCQzhETlBDMzlNM3l2X2FGbnRWajNtZ1BKQjdKaHo3cURjWG5mTVFjNFVRRHVhYXJaalNFUVhMOVZqcWhpbWcySE1hZDQ5SWtzZFM3VDlQRkdxcnpoZnl5ZnF5anpsekEwTDE5OE43cGtDOEZmdDE1eFdsQjJaX2tYY3BiWnpQbGRJTV83QU5KTUFuM2Y5TW5DdGhiZg?oc=5",
+    "source": "Crain's Grand Rapids Business",
+    "published": "Wed, 22 Jul 2026 09:30:00 GMT",
+    "published_ts": "2026-07-22T09:30:00+00:00",
+    "submarket_key": "grand_haven",
+    "submarket_label": "Grand Haven",
+    "stage": "proposed",
+    "is_direct_competitor": false,
+    "status": "pending"
   }
 }

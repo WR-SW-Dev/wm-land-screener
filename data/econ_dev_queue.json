@@ -2189,5 +2189,17 @@
     "county_label": "Kent County",
     "category": "retail",
     "status": "rejected"
+  },
+  "ac482b7fb684": {
+    "id": "ac482b7fb684",
+    "title": "West Michigan dad loses $5,500 in scam targeting parents with jailed children - WOODTV.com",
+    "link": "https://news.google.com/rss/articles/CBMiuAFBVV95cUxOeU1UR0RISjl1RTJubm9haW5GNkNFWkkxZEhYNEpidVc2ZEpMbFllSEFwTVdaYVhwblFDaFh0RjBTajlwaUJWZzJnZEdXZFZ0cEZsVGNYRm9UWWpZc1dsZW82Um1JejNLdHlDRG1jRHUxbHRyMmJJQW9sRVBXenpZZDRPT3NUV0JxeTBrU1ZnUnBidEVBTHk5Rm5MblVXZWhoekhPZ2pSb3hsUUdVdjhVbXRUbl9OcE1Z0gG4AUFVX3lxTE55TVRHREhKOXVFMm5ub2FpbkY2Q0VaSTFkSFg0SmJ1VzZkSkxsWWVIQXBNV1phWHBuUUNoWHRGMFNqOXBpQlZnMmdkR1dkVnRwRmxUY1hGb1RZallzV2xlbzZSbUl6M0t0eUNEbWNEdTFsdHIyYklBb2xFUFd6ellkNE9Pc1RXQnF5MGtTVmdScGJ0RUFMeTlGbkxuVVdlaGh6SE9nalJveGxRR1V2OFVtdFRuX05wTVk?oc=5",
+    "source": "WOODTV.com",
+    "published": "Mon, 20 Jul 2026 21:48:48 GMT",
+    "published_ts": "2026-07-20T21:48:48+00:00",
+    "county_key": "allegan",
+    "county_label": "Allegan County",
+    "category": "retail",
+    "status": "rejected"
   }
 }

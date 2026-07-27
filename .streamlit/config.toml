@@ -1,3 +1,6 @@
+[server]
+runOnSave = false
+
 [theme]
 primaryColor       = "#779FA1"   # WR-Dev teal — replaces default Streamlit pink
 backgroundColor    = "#ffffff"

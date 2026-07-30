@@ -31,6 +31,7 @@ from market.housing_needs import load_housing_needs
 from market import econ_dev
 from market import competition
 from market import fred as fred_data_mod
+from market import census_bps as census_bps_mod
 import config
 from config import DEMAND_WEIGHTS
 
@@ -613,6 +614,141 @@ def _render_rental_by_income(county_key, needs_raw):
     c_table.dataframe(tbl, use_container_width=True, hide_index=True)
 
 
+_BPS_CATEGORIES = [
+    ("Single-family", "sf", 0, "#2a78d6"),
+    ("Duplex–quad", "mid", 1, "#eb6834"),
+    ("Multifamily", "mf", 2, "#1baf7a"),
+]
+
+
+def _render_permits_split_chart(annual, ytd, badge):
+    """Stacked bar (single-family / duplex-quad / multifamily units permitted
+    per year, Census BPS) + a year-over-year total-growth line underneath —
+    two panels sharing one x-axis, not one dual-axis chart (a % line and a
+    raw-unit-count bar chart are different scales; overlaying them on one
+    y-axis invites false visual correlations). A provisional year-to-date
+    bar/point (lighter fill / hollow marker) is appended when `ytd` is
+    available, comparing the same partial period in both years rather than
+    a partial year against a full one."""
+    import altair as alt
+
+    bar_rows = []
+    for a in annual:
+        for label, key, order, _ in _BPS_CATEGORIES:
+            bar_rows.append({"year": str(a["year"]), "category": label,
+                             "units": a[key], "order": order, "provisional": False})
+    ytd_label = None
+    if ytd:
+        ytd_label = f"{ytd['as_of'][:4]} YTD"
+        for label, key, order, _ in _BPS_CATEGORIES:
+            bar_rows.append({"year": ytd_label, "category": label,
+                             "units": ytd[key], "order": order, "provisional": True})
+    bdf = pd.DataFrame(bar_rows)
+
+    bar_chart = (
+        alt.Chart(bdf)
+        .mark_bar()
+        .encode(
+            x=alt.X("year:N", title=None, sort=None),
+            y=alt.Y("units:Q", title="Units permitted"),
+            order=alt.Order("order:Q"),
+            color=alt.Color("category:N", title=None,
+                            scale=alt.Scale(domain=[c[0] for c in _BPS_CATEGORIES],
+                                            range=[c[3] for c in _BPS_CATEGORIES])),
+            opacity=alt.condition("datum.provisional", alt.value(0.5), alt.value(1.0)),
+            tooltip=["year", "category", alt.Tooltip("units:Q", title="Units", format=",.0f")],
+        )
+        .properties(height=220)
+    )
+
+    # Same pace-needed reference line as before, now drawn over the stacked
+    # total (a rule's y-position doesn't care whether the bar below it is
+    # flat or stacked) — clipped to the study-period years actually on this
+    # chart; a provisional "YYYY YTD" label never matches that plain-4-digit-
+    # year set, so it's correctly excluded from the line automatically.
+    years_present = sorted({r["year"] for r in bar_rows if not r["provisional"]})
+    study_years = [str(y) for y in range(badge["start_year"], badge["end_year"] + 1)] if badge else []
+    chart_years = sorted(y for y in years_present if y in study_years)
+    if badge and chart_years:
+        rule = (
+            alt.Chart(pd.DataFrame({
+                "x_start": [chart_years[0]], "x_end": [chart_years[-1]],
+                "pace": [badge["annual_pace"]],
+            }))
+            .mark_rule(color="#9ca3af", strokeDash=[6, 4], size=2)
+            .encode(x="x_start:N", x2="x_end:N", y=alt.Y("pace:Q"))
+        )
+        bar_chart = bar_chart + rule
+    st.altair_chart(bar_chart, use_container_width=True)
+    if badge and chart_years:
+        st.caption(
+            f"Dashed line ({chart_years[0]}–{chart_years[-1]}) = "
+            f"**{badge['annual_pace']:,.0f}/yr** pace needed to close the "
+            f"gap within the {badge['study_period']} study period."
+        )
+    if ytd_label:
+        st.caption(f"Lighter bar = {ytd_label} (through {ytd['as_of'][5:]}/{ytd['as_of'][:4]}) — "
+                   f"partial year, not directly comparable to the full-year bars beside it.")
+
+    # ── Year-over-year growth of the total, as its own panel below ─────────
+    totals = {str(a["year"]): a["sf"] + a["mid"] + a["mf"] for a in annual}
+    years_sorted = sorted(totals, key=int)
+    growth_rows = []
+    for i in range(1, len(years_sorted)):
+        y0, y1 = years_sorted[i - 1], years_sorted[i]
+        pct = (totals[y1] - totals[y0]) / totals[y0] * 100 if totals[y0] else None
+        if pct is not None:
+            growth_rows.append({"year": y1, "pct": pct, "provisional": False})
+    if ytd and years_sorted:
+        ytd_total = ytd["sf"] + ytd["mid"] + ytd["mf"]
+        prior_total = ytd["prior_sf"] + ytd["prior_mid"] + ytd["prior_mf"]
+        if prior_total:
+            pct = (ytd_total - prior_total) / prior_total * 100
+            growth_rows.append({"year": ytd_label, "pct": pct, "provisional": True})
+
+    if growth_rows:
+        gdf = pd.DataFrame(growth_rows)
+        gdf["sign"] = gdf["pct"].apply(lambda v: "up" if v >= 0 else "down")
+        hist = gdf[~gdf["provisional"]]
+        prov = gdf[gdf["provisional"]]
+        color_scale = alt.Scale(domain=["up", "down"], range=["#2a78d6", "#e34948"])
+        year_order = years_sorted + ([ytd_label] if ytd_label else [])
+
+        st.markdown("<div style='font-size:13px;color:#666;margin-top:6px;'>"
+                    "Year-over-year change, total units permitted</div>",
+                    unsafe_allow_html=True)
+
+        zero_rule = (alt.Chart(pd.DataFrame({"y": [0]}))
+                    .mark_rule(strokeDash=[4, 4], color="#c3c2b7").encode(y="y:Q"))
+        layers = [zero_rule]
+        if not hist.empty:
+            layers.append(
+                alt.Chart(hist).mark_line(color="#9ca3af", strokeWidth=2)
+                .encode(x=alt.X("year:N", title=None, sort=year_order), y=alt.Y("pct:Q", title="YoY change (%)")))
+        if not prov.empty and not hist.empty:
+            connect_df = pd.concat([hist.iloc[[-1]], prov])
+            layers.append(
+                alt.Chart(connect_df).mark_line(color="#9ca3af", strokeWidth=2, strokeDash=[4, 4])
+                .encode(x=alt.X("year:N", sort=year_order), y="pct:Q"))
+        if not hist.empty:
+            layers.append(
+                alt.Chart(hist).mark_point(filled=True, size=90)
+                .encode(x=alt.X("year:N", sort=year_order), y="pct:Q",
+                       color=alt.Color("sign:N", scale=color_scale, legend=None),
+                       tooltip=["year", alt.Tooltip("pct:Q", title="YoY", format="+.1f")]))
+        if not prov.empty:
+            layers.append(
+                alt.Chart(prov).mark_point(filled=False, size=90, strokeWidth=2)
+                .encode(x=alt.X("year:N", sort=year_order), y="pct:Q",
+                       color=alt.Color("sign:N", scale=color_scale, legend=None),
+                       tooltip=["year", alt.Tooltip("pct:Q", title="YoY", format="+.1f")]))
+        growth_chart = alt.layer(*layers).properties(height=120)
+        st.altair_chart(growth_chart, use_container_width=True)
+        if ytd_label:
+            st.caption(f"Hollow point = {ytd_label} vs the same months in the prior year "
+                       f"(not a full-year comparison).")
+
+
 def _render_market_pricing(county_key, needs_row, fred):
     """Market Pricing & Momentum (FRED): HPI trend + permits vs the HNA need."""
     import altair as alt
@@ -621,9 +757,18 @@ def _render_market_pricing(county_key, needs_row, fred):
     chart_rows = fred_data_mod.hpi_chart_frame(county_key, fred)
     permit_rows = fred_data_mod.permits_recent(county_key, fred)
     badge = fred_data_mod.momentum_badge(county_key, fred, needs_row)
+    # Structure-type split (single-family / duplex-quad / multifamily) comes
+    # straight from Census's own county BPS files, not FRED — confirmed live
+    # 2026-07-30 that FRED's county permit series has no such breakdown for
+    # any of these counties, only the single blended total used above for
+    # the momentum badge (which stays total-based; the HNA need figure it's
+    # compared against isn't split by structure type either).
+    bps_annual = census_bps_mod.load_bps_data().get(county_key, {})
+    annual = bps_annual.get("annual", [])
+    ytd = bps_annual.get("ytd")
 
-    if not metrics and not permit_rows:
-        return  # FRED unavailable for this county — skip the section quietly
+    if not metrics and not permit_rows and not annual:
+        return  # no FRED or Census data for this county — skip the section quietly
 
     st.markdown("##### Market pricing & momentum")
     st.caption("Is the market already responding to this need? Home-price "
@@ -658,7 +803,12 @@ def _render_market_pricing(county_key, needs_row, fred):
             st.altair_chart(chart, use_container_width=True)
 
     with right:
-        if permit_rows:
+        if annual:
+            _render_permits_split_chart(annual, ytd, badge)
+        elif permit_rows:
+            # Census BPS unavailable for this county but FRED's blended total
+            # still is — fall back to the old single-series bar rather than
+            # showing nothing.
             pdf = pd.DataFrame(permit_rows)
             pdf["year"] = pdf["date"].str[:4]
             pchart = (
@@ -671,35 +821,7 @@ def _render_market_pricing(county_key, needs_row, fred):
                 )
                 .properties(height=220)
             )
-            # Reference line at the annual pace needed to close the HNA gap
-            # by the end of the study period — bars below the line are
-            # falling behind that pace, making the gap visible directly on
-            # the chart rather than only in the badge text below. Clipped to
-            # the study-period years that actually appear on this chart (via
-            # x/x2, not a plain full-width rule) — the pace figure is only
-            # meaningful within that county's own study period, so drawing
-            # it across the whole 10-year history would wrongly imply the
-            # same target applied to years like 2016.
-            study_years = [str(y) for y in range(badge["start_year"], badge["end_year"] + 1)] if badge else []
-            chart_years = sorted(y for y in pdf["year"] if y in study_years)
-            if badge and chart_years:
-                rule = (
-                    alt.Chart(pd.DataFrame({
-                        "x_start": [chart_years[0]], "x_end": [chart_years[-1]],
-                        "pace": [badge["annual_pace"]],
-                    }))
-                    .mark_rule(color="#9ca3af", strokeDash=[6, 4], size=2)
-                    .encode(x="x_start:N", x2="x_end:N", y=alt.Y("pace:Q"))
-                )
-                pchart = pchart + rule
-                st.altair_chart(pchart, use_container_width=True)
-                st.caption(
-                    f"Dashed line ({chart_years[0]}–{chart_years[-1]}) = "
-                    f"**{badge['annual_pace']:,.0f}/yr** pace needed to close the "
-                    f"gap within the {badge['study_period']} study period."
-                )
-            else:
-                st.altair_chart(pchart, use_container_width=True)
+            st.altair_chart(pchart, use_container_width=True)
         if badge:
             dot = {"red": "🔴", "yellow": "🟡", "green": "🟢"}[badge["color"]]
             st.markdown(f"{dot} **{badge['label']}** — permits issued in "
@@ -888,6 +1010,154 @@ def _render_municipalities(county_key, muni_df, muni_bounds, pins=None,
                              key=sel_key)
     _render_place_detail(muni[muni["label"] == sel_label].iloc[0])
     return sel_label
+
+
+# ── Compare view — any county or municipality against any other ────────────────
+# Direction is fixed per metric (not a per-row UI toggle) — decided with the
+# user 2026-07-29. "higher"/"lower" = which direction is favorable for the
+# BASE entity; None = shown plainly, no color (home value and cost burden
+# were deliberately left uncolored — each requires a two-hop inference to
+# call "favorable" that isn't obvious from the number alone, unlike e.g.
+# vacancy where lower→tighter→more BTR demand is a direct read). Population
+# itself was dropped entirely — raw population variance isn't a meaningful
+# comparison on its own.
+_COMPARE_SECTIONS = [
+    ("Affordability", [
+        ("median_hh_income",    "Median HH income",          "dollar",    "higher"),
+        ("max_affordable_rent", "Max affordable rent (30%)", "dollar_mo", "higher"),
+        ("median_gross_rent",   "Median gross rent",         "dollar_mo", "higher"),
+        ("median_home_value",   "Median home value",         "dollar",    None),
+    ]),
+    ("Rental market", [
+        ("rental_vacancy_rate", "Rental vacancy rate",   "pct1", "lower"),
+        ("cost_burden_pct",     "Cost-burdened renters", "pct0", None),
+        ("renter_share_pct",    "Renter share",          "pct0", "higher"),
+    ]),
+    ("Growth", [
+        ("pop_growth_pct", "Population growth", "pct1", "higher"),
+    ]),
+]
+
+_CMP_FAVORABLE_COLOR   = "#1a9850"   # same green as the "low demand" tier
+_CMP_UNFAVORABLE_COLOR = "#d73027"   # same red as the "high demand" tier
+_CMP_NEUTRAL_COLOR     = "#6b7280"
+
+
+def _cmp_fmt_value(kind, v):
+    if v is None or (isinstance(v, float) and v != v):
+        return "—"
+    if kind == "dollar":    return f"${v:,.0f}"
+    if kind == "dollar_mo": return f"${v:,.0f}/mo"
+    if kind == "pct1":      return f"{v:.1f}%"
+    if kind == "pct0":      return f"{v:.0f}%"
+    if kind == "int":       return f"{v:,.0f}"
+    return str(v)
+
+
+def _cmp_fmt_delta(kind, d):
+    if d is None or (isinstance(d, float) and d != d):
+        return "—"
+    sign, ad = ("+" if d >= 0 else "-"), abs(d)
+    if kind in ("dollar", "dollar_mo"): return f"{sign}${ad:,.0f}"
+    if kind == "pct1":                  return f"{sign}{ad:.1f} pts"
+    if kind == "pct0":                  return f"{sign}{ad:.0f} pts"
+    if kind == "int":                   return f"{sign}{ad:,.0f}"
+    return f"{sign}{ad}"
+
+
+def _cmp_delta_color(direction, d):
+    if direction is None or d is None or (isinstance(d, float) and d != d) or d == 0:
+        return _CMP_NEUTRAL_COLOR
+    favorable = (d > 0) if direction == "higher" else (d < 0)
+    return _CMP_FAVORABLE_COLOR if favorable else _CMP_UNFAVORABLE_COLOR
+
+
+def _cmp_entity_header_html(info):
+    """Name + tier badge (municipality) or 'Baseline' caption (county)."""
+    html = f"<div style='font-weight:600;'>{info['label']}</div>"
+    if info["kind"] == "muni" and info.get("tier"):
+        color = _TIER_COLORS[info["tier"]]
+        county_label = info.get("county_label", "")
+        rank_txt = f"rank {info['rank']} of {info['n']}"
+        rank_txt += f" in {county_label}" if county_label else ""
+        html += (f"<span style='display:inline-block;margin-top:4px;padding:2px 8px;"
+                 f"border-radius:6px;font-size:12px;background:{color}22;color:{color};'>"
+                 f"{_TIER_LABELS[info['tier']]} · {rank_txt}</span>")
+    else:
+        html += "<div style='font-size:12px;color:#6b7280;'>Baseline</div>"
+    return html
+
+
+def _render_compare(df, muni):
+    """Standalone comparison of any county against any county or municipality —
+    intentionally its own top-level view (not nested in the municipal
+    breakdown) since it needs to compare across counties too, not just within
+    one county's municipalities."""
+    st.markdown("##### Compare any county or municipality")
+    st.caption("Pick a base and something to compare it against. The variance "
+               "is the base minus the comparison — green when that's the "
+               "favorable direction for the base, red when it isn't. A few "
+               "metrics (home value, cost burden) are shown plainly with no "
+               "color — the favorable direction for those isn't a direct "
+               "read, so we didn't force a judgment.")
+
+    counties = df[df["tier"] == "county"]
+    county_label_by_key = dict(zip(counties["key"].astype(str), counties["label"]))
+
+    tiers = {}
+    for _, grp in muni.groupby("county_key"):
+        tiers.update(_demand_tiers(grp))
+
+    entities = {}
+    for _, row in counties.iterrows():
+        entities[f"county:{row['key']}"] = {"label": row["label"], "kind": "county", "row": row}
+    for _, row in muni.iterrows():
+        info = tiers.get(str(row["key"]), {})
+        county_label = county_label_by_key.get(str(row["county_key"]), "")
+        label = f"{row['label']} ({county_label})" if county_label else row["label"]
+        entities[f"muni:{row['key']}"] = {"label": label, "kind": "muni", "row": row,
+                                          "tier": info.get("tier"), "rank": info.get("rank"),
+                                          "n": info.get("n"), "county_label": county_label}
+
+    options = sorted(entities, key=lambda k: entities[k]["label"])
+    if len(options) < 2:
+        st.info("Not enough counties/municipalities loaded to compare.")
+        return
+
+    c1, c2 = st.columns(2)
+    base_key = c1.selectbox("Base", options, index=0,
+                            format_func=lambda k: entities[k]["label"], key="compare_base")
+    cmp_key  = c2.selectbox("Compare against", options, index=1,
+                            format_func=lambda k: entities[k]["label"], key="compare_cmp")
+
+    base, cmp = entities[base_key], entities[cmp_key]
+    hcol1, hcol2 = st.columns(2)
+    hcol1.markdown(_cmp_entity_header_html(base), unsafe_allow_html=True)
+    hcol2.markdown(_cmp_entity_header_html(cmp), unsafe_allow_html=True)
+
+    rows_html = ""
+    for section_title, rows in _COMPARE_SECTIONS:
+        rows_html += (f"<tr><td colspan='3' style='padding:10px 6px 4px;font-size:12px;"
+                      f"color:#6b7280;font-weight:600;'>{section_title}</td></tr>")
+        for col, label, kind, direction in rows:
+            base_val = base["row"].get(col)
+            cmp_val = cmp["row"].get(col)
+            delta = (base_val - cmp_val
+                     if pd.notna(base_val) and pd.notna(cmp_val) else None)
+            color = _cmp_delta_color(direction, delta)
+            rows_html += (
+                "<tr>"
+                f"<td style='padding:6px;color:#374151;'>{label}</td>"
+                f"<td style='padding:6px;background:#f9fafb;'>{_cmp_fmt_value(kind, base_val)}"
+                f"<div style='font-size:11px;color:{color};'>{_cmp_fmt_delta(kind, delta)}</div></td>"
+                f"<td style='padding:6px;'>{_cmp_fmt_value(kind, cmp_val)}</td>"
+                "</tr>"
+            )
+
+    st.markdown(
+        f"""<table style='width:100%;border-collapse:collapse;font-size:13px;'>
+        <tbody>{rows_html}</tbody></table>""",
+        unsafe_allow_html=True)
 
 
 # ── Economic development / employer news — on-demand scan + review inbox ───────
@@ -1407,7 +1677,7 @@ def render_market(view: str, on_continue):
             sel_county_label = label_by_key.get(county_key, county_key)
             st.button("⬅ Back to counties", on_click=_back_to_counties)
 
-            st.markdown(f"##### {sel_county_label} municipalities — demand score")
+            st.markdown(f"##### {sel_county_label} municipalities")
             st.caption("🟩 low → 🟥 high demand, ranked by tertile within this county's own "
                        "municipalities (not a fixed score cutoff). Hover for the tier and rank; "
                        "click a city/township to drill in. Small rural townships have noisier "
@@ -1457,6 +1727,9 @@ def render_market(view: str, on_continue):
                                             oz_fc=county_oz)
             if picked:
                 sel_label = picked
+
+    elif view == "Compare":
+        _render_compare(df, muni)
 
     else:  # Analyst — full tables
         sel_label = st.selectbox("Carry submarket into Land Screener",

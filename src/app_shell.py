@@ -25,6 +25,7 @@ import streamlit_authenticator as stauth
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(Path(__file__).parent))
 import app  # noqa: E402 — Land Screener module; exposes render_land()
+import config  # noqa: E402
 from market.render import render_market as _render_market  # noqa: E402
 
 # ── Page config ────────────────────────────────────────────────────────────────
@@ -237,15 +238,22 @@ def render_stepper(current_key: str):
 
 
 # ── Per-section placeholder bodies ───────────────────────────────────────────────
-def view_toggle(key: str) -> str:
-    return st.radio("View", ["Executive", "Analyst"], horizontal=True,
+def view_toggle(key: str, options=("Executive", "Analyst")) -> str:
+    return st.radio("View", list(options), horizontal=True,
                     key=f"view_{key}", label_visibility="collapsed")
 
 
 def render_market():
     # Section 1 UI lives in market/render.py (auth-free, harness-testable).
     # The shell owns the view toggle and supplies the Market → Land callback.
-    view = view_toggle("market")
+    # Analyst is admin/local-only — same IS_LOCAL convention already used to
+    # gate econ-dev/competition curation. This hides the tab; it doesn't touch
+    # _market_data() or what Executive/Compare compute for everyone else.
+    market_options = ("Executive", "Compare", "Analyst") if (config.IS_LOCAL or IS_ADMIN) \
+        else ("Executive", "Compare")
+    if st.session_state.get("view_market") not in (None, *market_options):
+        st.session_state["view_market"] = "Executive"   # stale value guard
+    view = view_toggle("market", options=market_options)
     _render_market(view, on_continue=lambda: go("land"))
 
 

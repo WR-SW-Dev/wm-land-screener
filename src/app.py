@@ -27,6 +27,9 @@ from utility_pdf import (WATER_SIZE_HEX, SEWER_SPEC_HEX,           # noqa: E402
                          sewer_spec_label)
 from ordinance import load_ordinance, get_district, ordinance_url  # noqa: E402
 from scoring import SCORE_COMPONENTS                              # noqa: E402
+from report_export import (build_pdf_report, build_excel_report,   # noqa: E402
+                           build_parcel_card)
+from parcel_thumbnail import fetch_parcel_thumbnail                # noqa: E402
 
 # ── Brand CSS (owned here; injected by the shell) ────────────────────────────
 def inject_brand_css():
@@ -407,7 +410,8 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
              drains_gdf: gpd.GeoDataFrame = None,
              water_gdf: gpd.GeoDataFrame = None,
              sewer_gdf: gpd.GeoDataFrame = None,
-             ordinance: dict = None) -> folium.Map:
+             ordinance: dict = None,
+             highlight_parcel_id: str = None) -> folium.Map:
     """Build a Folium map of qualified parcels, coloured by score."""
     tracker = tracker or {}
     min_lon, min_lat, max_lon, max_lat = bbox
@@ -522,6 +526,15 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         return m
 
     gdf = gdf.to_crs("EPSG:4326")
+
+    # Captured before dedup below — a highlighted parcel could be the *loser*
+    # of the condo/PUD geometry dedup (same footprint, lower score, dropped
+    # from the drawn layer) and would otherwise silently fail to highlight.
+    _highlight_geom = None
+    if highlight_parcel_id and "parcel_id" in gdf.columns:
+        _hl_match = gdf[gdf["parcel_id"].astype(str) == str(highlight_parcel_id)]
+        if not _hl_match.empty:
+            _highlight_geom = _hl_match.iloc[0].geometry
 
     # Deduplicate by geometry — condo/PUD developments often map many parcel
     # records to the exact same polygon. Stacking 40+ layers at 0.35 opacity
@@ -773,8 +786,38 @@ def make_map(gdf: gpd.GeoDataFrame, bbox: tuple,
         ).add_to(parcel_group)
 
     parcel_group.add_to(m)
+
+    # Highlight ring — must be added to the map BEFORE LayerControl below.
+    # Folium/Leaflet requires every toggleable layer to exist before
+    # LayerControl is constructed; adding one afterward silently breaks the
+    # streamlit-folium component's own height-reporting (confirmed by direct
+    # bisection — reproducible with the real parcel set, not with a
+    # single-polygon synthetic map, so it only shows up at realistic scale).
+    if _highlight_geom is not None:
+        folium.GeoJson(
+            _highlight_geom.__geo_interface__,
+            name="Selected parcel",
+            style_function=lambda _x: {
+                "fillOpacity": 0, "color": "#ffd700", "weight": 5,
+            },
+            # Purely visual — without this, its (invisible) fill still
+            # intercepts clicks meant for the actual parcel layer beneath
+            # it, since it's drawn on top and Leaflet hit-tests transparent
+            # fills by default.
+            interactive=False,
+        ).add_to(m)
+
     folium.LayerControl(position="topright", collapsed=False).add_to(m)
     m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]])
+
+    # Re-centered/zoomed view override — after the default fit_bounds above,
+    # so picking a parcel actually jumps the map there instead of just
+    # adding a marker you'd still have to go hunt for.
+    if _highlight_geom is not None:
+        hb = _highlight_geom.bounds   # (minx, miny, maxx, maxy) = (west, south, east, north)
+        pad = 0.0015                  # ~small padding so the parcel isn't flush to the viewport edge
+        m.fit_bounds([[hb[1] - pad, hb[0] - pad], [hb[3] + pad, hb[2] + pad]])
+
     return m
 
 
@@ -1045,6 +1088,24 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         leg3.markdown(f"<span style='display:inline-block;width:14px;height:14px;background:{COLOR_LOW};border-radius:2px;vertical-align:middle;margin-right:4px;'></span> Score < {SCORE_MED}",
                       unsafe_allow_html=True)
 
+        # ── Jump to a parcel — the actual selectbox widget renders further
+        # down (below the qualifying-parcels table, above "Branded report"),
+        # but its highlight needs to be known here, before the map is built.
+        # Session_state for a widget's key persists across reruns even
+        # before that widget is (re)instantiated later in the same run, so
+        # reading it here is safe and picks up whatever was last selected.
+        # Shared with the "Produce card" button further down (same picker,
+        # not a duplicate) since a click-to-popup on the map itself isn't
+        # reliable in this app (folium.Popup(show=True) driven by a rerun
+        # was already tried for the Market Feasibility county map and failed
+        # live despite looking correct in raw HTML — same st_folium pipeline).
+        card_labels = {
+            f"{r.get('address') or '(no address)'} — {r['parcel_id']}": str(r["parcel_id"])
+            for _, r in qual_filtered.sort_values("score", ascending=False).iterrows()
+        } if "parcel_id" in qual_filtered.columns else {}
+        _jump_pick_pre = st.session_state.get(f"card_pick_{city_key}", "(none)")
+        highlight_pid = card_labels.get(_jump_pick_pre) if _jump_pick_pre != "(none)" else None
+
         # ── Merge MF-recomputed values into gdf_shown so popup reflects active mode ───
         if USE_MF and gdf_shown is not None and not gdf_shown.empty \
                 and "parcel_id" in qual_filtered.columns and "parcel_id" in gdf_shown.columns:
@@ -1072,7 +1133,8 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         m = make_map(gdf_shown, city_cfg["bbox"], mode_label=_mode_label_map,
                      wetlands_gdf=_wetlands_overlay, tracker=tracker,
                      drains_gdf=_drains_overlay, water_gdf=_water_overlay,
-                     sewer_gdf=_sewer_overlay, ordinance=_ordinance)
+                     sewer_gdf=_sewer_overlay, ordinance=_ordinance,
+                     highlight_parcel_id=highlight_pid)
         st_folium(m, use_container_width=True, height=700, returned_objects=[])
 
         # Overlay keys below the map (labeled), for the in-map toggles.
@@ -1205,13 +1267,71 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
                     save_tracker(updates)
                     tracker.update(updates)
 
-            csv_bytes = qual_filtered.to_csv(index=False).encode()
-            st.download_button(
-                "⬇ Download filtered CSV",
-                data=csv_bytes,
-                file_name=f"{city_key}_qualified_filtered.csv",
-                mime="text/csv",
-            )
+            jump_pick = st.selectbox("Jump to a parcel on the map",
+                                     ["(none)"] + list(card_labels.keys()),
+                                     key=f"card_pick_{city_key}")
+            highlight_pid = card_labels.get(jump_pick) if jump_pick != "(none)" else None
+
+            st.markdown("###### Branded report")
+            rcol1, rcol2 = st.columns([1, 1])
+            report_format = rcol1.radio("Format", ["PDF", "Excel"], horizontal=True,
+                                        key=f"report_fmt_{city_key}", label_visibility="collapsed")
+            if rcol2.button("Produce report", key=f"produce_report_{city_key}"):
+                with st.spinner("Building report…"):
+                    if report_format == "PDF":
+                        report_bytes = build_pdf_report(fmt_sorted, selected_label)
+                        report_mime = "application/pdf"
+                        report_name = f"{city_key}_qualified_report.pdf"
+                    else:
+                        report_bytes = build_excel_report(fmt_sorted, selected_label)
+                        report_mime = ("application/vnd.openxmlformats-officedocument"
+                                      ".spreadsheetml.sheet")
+                        report_name = f"{city_key}_qualified_report.xlsx"
+                    st.session_state[f"report_bytes_{city_key}"] = report_bytes
+                    st.session_state[f"report_meta_{city_key}"] = (report_mime, report_name)
+            if f"report_bytes_{city_key}" in st.session_state:
+                _mime, _name = st.session_state[f"report_meta_{city_key}"]
+                st.download_button(
+                    "⬇ Download report", data=st.session_state[f"report_bytes_{city_key}"],
+                    file_name=_name, mime=_mime, key=f"download_report_{city_key}")
+
+            # ── Per-parcel listing card ─────────────────────────────────────────────
+            # Reuses the "Jump to a parcel" picker above the map (same
+            # widget/key) rather than a second selectbox down here — picking
+            # a parcel there both centers the map on it AND is what this
+            # button produces a card for, so there's one selection, not two.
+            st.markdown("###### Per-parcel listing card")
+            if highlight_pid:
+                st.caption(f"Selected: {jump_pick}")
+                if st.button("Produce card", key=f"produce_card_{city_key}"):
+                    with st.spinner("Building listing card…"):
+                        pid = highlight_pid
+                        match = qual_filtered[qual_filtered["parcel_id"].astype(str) == pid]
+                        if not match.empty:
+                            parcel_row = match.iloc[0]
+                            geom = None
+                            if (gdf_shown is not None and not gdf_shown.empty
+                                    and "parcel_id" in gdf_shown.columns):
+                                geom_match = gdf_shown[gdf_shown["parcel_id"].astype(str) == pid]
+                                if not geom_match.empty:
+                                    geom = geom_match.to_crs("EPSG:4326").iloc[0].geometry
+                            thumb = (fetch_parcel_thumbnail(geom, label=parcel_row.get("address") or "")
+                                    if geom is not None else None)
+                            _trk = tracker.get(pid, {})
+                            st.session_state[f"card_bytes_{city_key}"] = build_parcel_card(
+                                parcel_row, selected_label, thumbnail_png=thumb,
+                                status=_trk.get("status", "Not contacted"),
+                                notes=_trk.get("notes", ""))
+                            st.session_state[f"card_name_{city_key}"] = f"{pid}_listing_card.pdf"
+                if f"card_bytes_{city_key}" in st.session_state:
+                    st.download_button(
+                        "⬇ Download listing card",
+                        data=st.session_state[f"card_bytes_{city_key}"],
+                        file_name=st.session_state[f"card_name_{city_key}"],
+                        mime="application/pdf", key=f"download_card_{city_key}")
+            else:
+                st.caption('Pick a parcel from the "Jump to a parcel on the map" selector '
+                          "above to produce its listing card.")
 
         # ── Tracker summary ───────────────────────────────────────────────────────────
         if tracker:
@@ -1238,7 +1358,7 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         # ── Per-parcel score breakdown ────────────────────────────────────────────────
         comp_keys = [c["key"] for c in SCORE_COMPONENTS]
         if not qual_filtered.empty and all(k in qual_filtered.columns for k in comp_keys):
-            with st.expander("Score breakdown — per parcel", expanded=True):
+            with st.expander("Score breakdown — per parcel", expanded=False):
                 st.caption(
                     "Shows how each component contributed to a parcel's total score. "
                     "Bar = % of that component's maximum earned."
@@ -1302,7 +1422,7 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
             if not rezone_parcels.empty:
                 with st.expander(
                     f"Rezoning watch list  ({len(rezone_parcels)} parcels with upside)",
-                    expanded=True,
+                    expanded=False,
                 ):
                     st.caption(
                         "These qualifying parcels are **master-planned for higher density** than "
@@ -1328,7 +1448,7 @@ def render_land(_username, _user_data, IS_ADMIN, _authenticator):
         if "dev_pathway" in qual_filtered.columns:
             with st.expander(
                 "Development pathway breakdown  (how each parcel reaches 3+ u/ac)",
-                expanded=True,
+                expanded=False,
             ):
                 st.caption(
                     "Every qualifying parcel is classified by the **simplest available route** to "

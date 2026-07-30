@@ -16,6 +16,7 @@ Public API:
     render_market(view: str, on_continue) -> None
 """
 import hashlib
+import math
 
 import pandas as pd
 import streamlit as st
@@ -610,7 +611,8 @@ def _render_rental_by_income(county_key, needs_raw):
     # Side by side, centered: equal spacer columns keep the pair off the edges
     # and each element ~40% wide (readable, not stretched across the screen).
     _, c_chart, c_table, _ = st.columns([1, 4, 4, 1])
-    c_chart.altair_chart(chart, use_container_width=True)
+    c_chart.altair_chart(chart, use_container_width=True,
+                         key=f"income_band_chart_{county_key}")
     c_table.dataframe(tbl, use_container_width=True, hide_index=True)
 
 
@@ -621,7 +623,29 @@ _BPS_CATEGORIES = [
 ]
 
 
-def _render_permits_split_chart(annual, ytd, badge):
+def _pct_axis_bounds(values):
+    """(domain, tick_values) for a signed-percentage axis — rounded out to nice
+    round steps, always including 0, targeting ~4 ticks so the labels stay
+    readable in a short panel. Returned explicitly rather than left to Vega's
+    inference: see the y-scale note in _render_permits_split_chart."""
+    vals = [float(v) for v in values]
+    lo, hi = min(vals + [0.0]), max(vals + [0.0])
+    step = 5
+    for step in (5, 10, 20, 25, 50, 100, 200, 500):
+        lo_b = -(math.ceil(abs(lo) / step) * step) if lo < 0 else 0
+        hi_b = (math.ceil(hi / step) * step) if hi > 0 else 0
+        if hi_b == lo_b:                     # all-zero data — give it real height
+            hi_b = lo_b + step
+        if (hi_b - lo_b) / step <= 5:
+            break
+    ticks, v = [], lo_b
+    while v <= hi_b + 1e-9:
+        ticks.append(int(round(v)))
+        v += step
+    return [lo_b, hi_b], ticks
+
+
+def _render_permits_split_chart(county_key, annual, ytd, badge):
     """Stacked bar (single-family / duplex-quad / multifamily units permitted
     per year, Census BPS) + a year-over-year total-growth line underneath —
     two panels sharing one x-axis, not one dual-axis chart (a % line and a
@@ -664,34 +688,99 @@ def _render_permits_split_chart(annual, ytd, badge):
     # Same pace-needed reference line as before, now drawn over the stacked
     # total (a rule's y-position doesn't care whether the bar below it is
     # flat or stacked) — clipped to the study-period years actually on this
-    # chart; a provisional "YYYY YTD" label never matches that plain-4-digit-
-    # year set, so it's correctly excluded from the line automatically.
-    years_present = sorted({r["year"] for r in bar_rows if not r["provisional"]})
+    # chart. The line's right end is pinned to the last category actually on
+    # the x-axis (the provisional YTD bar when present) rather than to the
+    # last *full* study year, so it always reaches the edge of the plot
+    # instead of stopping one bar short once a YTD bar is appended.
+    years_present = sorted({r["year"] for r in bar_rows if not r["provisional"]}, key=int)
     study_years = [str(y) for y in range(badge["start_year"], badge["end_year"] + 1)] if badge else []
-    chart_years = sorted(y for y in years_present if y in study_years)
+    chart_years = [y for y in years_present if y in study_years]
+    year_order = years_present + ([ytd_label] if ytd_label else [])
+    year_totals = {str(a["year"]): a["sf"] + a["mid"] + a["mf"] for a in annual}
+
     if badge and chart_years:
+        line_end = ytd_label if ytd_label else chart_years[-1]
         rule = (
             alt.Chart(pd.DataFrame({
-                "x_start": [chart_years[0]], "x_end": [chart_years[-1]],
+                "x_start": [chart_years[0]], "x_end": [line_end],
                 "pace": [badge["annual_pace"]],
             }))
             .mark_rule(color="#9ca3af", strokeDash=[6, 4], size=2)
-            .encode(x="x_start:N", x2="x_end:N", y=alt.Y("pace:Q"))
+            .encode(x=alt.X("x_start:N", sort=year_order, bandPosition=0),
+                    x2="x_end:N", y=alt.Y("pace:Q"))
         )
         bar_chart = bar_chart + rule
-    st.altair_chart(bar_chart, use_container_width=True)
+
+        # Gap-to-pace bracket: offset to the right of each year's bar (not
+        # drawn through its fill) — two end-caps at the bar's actual total
+        # and at the pace line, joined by a stem, with the numeric gap
+        # printed beside it. One neutral gray throughout (matching the pace
+        # line) — the +/- sign on the number itself already says whether
+        # that year cleared pace, so the bracket doesn't need to repeat it
+        # in color.
+        gap_df = pd.DataFrame([
+            {"year": y, "total": year_totals[y], "pace": badge["annual_pace"],
+             "mid_y": (year_totals[y] + badge["annual_pace"]) / 2,
+             "gap": year_totals[y] - badge["annual_pace"], "row": i % 2}
+            for i, y in enumerate(chart_years)
+        ])
+        _BRACKET_GRAY = "#9ca3af"
+        _LABEL_GRAY = "#6b7280"
+        gap_tooltip = ["year",
+                       alt.Tooltip("total:Q", title="Permitted", format=",.0f"),
+                       alt.Tooltip("pace:Q", title="Pace needed", format=",.0f"),
+                       alt.Tooltip("gap:Q", title="Gap", format="+,.0f")]
+        # Positioned via bandPosition (a fraction of each category's own
+        # band width) rather than a fixed pixel xOffset — a fixed-pixel
+        # offset doesn't shrink with the chart on a narrower screen, so at
+        # some point the label runs into the bracket (or the next bar).
+        # bandPosition scales with the band itself, so the gap stays
+        # proportional at any container width.
+        bracket_x = alt.X("year:N", sort=year_order, bandPosition=0.82)
+        label_x = alt.X("year:N", sort=year_order, bandPosition=0.82)
+        stem = (
+            alt.Chart(gap_df).mark_rule(strokeWidth=2, color=_BRACKET_GRAY)
+            .encode(x=bracket_x, y="total:Q", y2="pace:Q", tooltip=gap_tooltip)
+        )
+        cap_total = (
+            alt.Chart(gap_df).mark_tick(thickness=2, size=12, color=_BRACKET_GRAY)
+            .encode(x=bracket_x, y="total:Q", tooltip=gap_tooltip)
+        )
+        cap_pace = (
+            alt.Chart(gap_df).mark_tick(thickness=2, size=12, color=_BRACKET_GRAY)
+            .encode(x=bracket_x, y="pace:Q", tooltip=gap_tooltip)
+        )
+        # Neighboring years' brackets sit only one band-width apart, and a
+        # 6-character number can be wider than that band once the chart is
+        # narrow enough — no horizontal offset fixes that, since the text's
+        # pixel width doesn't shrink with the container. Staggering
+        # consecutive labels to alternating heights keeps them apart
+        # vertically instead, which holds at any width.
+        bar_chart = bar_chart + stem + cap_total + cap_pace
+        for row, dy in {0: -6, 1: 20}.items():
+            row_df = gap_df[gap_df["row"] == row]
+            if row_df.empty:
+                continue
+            bar_chart = bar_chart + (
+                alt.Chart(row_df)
+                .mark_text(align="left", dx=4, dy=dy, fontSize=11,
+                          fontWeight="bold", color=_LABEL_GRAY)
+                .encode(x=label_x, y="mid_y:Q", text=alt.Text("gap:Q", format="+,.0f"))
+            )
+    st.altair_chart(bar_chart, use_container_width=True,
+                    key=f"permits_bar_{county_key}")
     if badge and chart_years:
         st.caption(
-            f"Dashed line ({chart_years[0]}–{chart_years[-1]}) = "
-            f"**{badge['annual_pace']:,.0f}/yr** pace needed to close the "
-            f"gap within the {badge['study_period']} study period."
+            f"Dashed line = **{badge['annual_pace']:,.0f}/yr** pace needed to "
+            f"close the gap within the {badge['study_period']} study period. "
+            f"Brackets show each year's gap to that pace, in units."
         )
     if ytd_label:
         st.caption(f"Lighter bar = {ytd_label} (through {ytd['as_of'][5:]}/{ytd['as_of'][:4]}) — "
                    f"partial year, not directly comparable to the full-year bars beside it.")
 
     # ── Year-over-year growth of the total, as its own panel below ─────────
-    totals = {str(a["year"]): a["sf"] + a["mid"] + a["mf"] for a in annual}
+    totals = year_totals
     years_sorted = sorted(totals, key=int)
     growth_rows = []
     for i in range(1, len(years_sorted)):
@@ -718,32 +807,55 @@ def _render_permits_split_chart(annual, ytd, badge):
                     "Year-over-year change, total units permitted</div>",
                     unsafe_allow_html=True)
 
-        zero_rule = (alt.Chart(pd.DataFrame({"y": [0]}))
-                    .mark_rule(strokeDash=[4, 4], color="#c3c2b7").encode(y="y:Q"))
-        layers = [zero_rule]
+        # Every layer shares ONE explicit y encoding — same field name, same
+        # pinned domain, same tick values. This is load-bearing, not cosmetic:
+        # with the domain left to Vega to infer, this layered chart's shared
+        # y-scale could resolve to the zero-reference layer's degenerate
+        # [0, 0] domain instead of the union across layers, which collapses
+        # every point onto the zero line and leaves the axis with a single "0"
+        # label. Pinning the domain makes that state unreachable — and gives
+        # the panel the numbered gridlines it should have had regardless.
+        y_domain, y_ticks = _pct_axis_bounds(gdf["pct"])
+        y_enc = alt.Y(
+            "pct:Q", title="YoY change",
+            scale=alt.Scale(domain=y_domain, nice=False, zero=False, clamp=True),
+            axis=alt.Axis(values=y_ticks, grid=True,
+                          labelExpr="(datum.value > 0 ? '+' : '') + datum.value + '%'"),
+        )
+        x_enc = alt.X("year:N", title=None, sort=year_order)
+        pct_tip = alt.Tooltip("pct:Q", title="YoY", format="+.1f")
+
+        # Zero baseline, drawn from the same field as the data layers so the
+        # shared scale has nothing ambiguous to resolve.
+        layers = [alt.Chart(pd.DataFrame({"pct": [0.0]}))
+                  .mark_rule(strokeDash=[4, 4], color="#c3c2b7").encode(y=y_enc)]
         if not hist.empty:
             layers.append(
                 alt.Chart(hist).mark_line(color="#9ca3af", strokeWidth=2)
-                .encode(x=alt.X("year:N", title=None, sort=year_order), y=alt.Y("pct:Q", title="YoY change (%)")))
+                .encode(x=x_enc, y=y_enc))
         if not prov.empty and not hist.empty:
             connect_df = pd.concat([hist.iloc[[-1]], prov])
             layers.append(
                 alt.Chart(connect_df).mark_line(color="#9ca3af", strokeWidth=2, strokeDash=[4, 4])
-                .encode(x=alt.X("year:N", sort=year_order), y="pct:Q"))
+                .encode(x=x_enc, y=y_enc))
         if not hist.empty:
             layers.append(
                 alt.Chart(hist).mark_point(filled=True, size=90)
-                .encode(x=alt.X("year:N", sort=year_order), y="pct:Q",
+                .encode(x=x_enc, y=y_enc,
                        color=alt.Color("sign:N", scale=color_scale, legend=None),
-                       tooltip=["year", alt.Tooltip("pct:Q", title="YoY", format="+.1f")]))
+                       tooltip=["year", pct_tip]))
         if not prov.empty:
             layers.append(
                 alt.Chart(prov).mark_point(filled=False, size=90, strokeWidth=2)
-                .encode(x=alt.X("year:N", sort=year_order), y="pct:Q",
+                .encode(x=x_enc, y=y_enc,
                        color=alt.Color("sign:N", scale=color_scale, legend=None),
-                       tooltip=["year", alt.Tooltip("pct:Q", title="YoY", format="+.1f")]))
-        growth_chart = alt.layer(*layers).properties(height=120)
-        st.altair_chart(growth_chart, use_container_width=True)
+                       tooltip=["year", pct_tip]))
+        # 150 (was 120): the pinned axis now renders real tick labels, and the
+        # rotated year labels below need the extra room or Vega's fit-autosize
+        # squeezes the plot area itself.
+        growth_chart = alt.layer(*layers).properties(height=150)
+        st.altair_chart(growth_chart, use_container_width=True,
+                        key=f"permits_growth_{county_key}")
         if ytd_label:
             st.caption(f"Hollow point = {ytd_label} vs the same months in the prior year "
                        f"(not a full-year comparison).")
@@ -800,11 +912,12 @@ def _render_market_pricing(county_key, needs_row, fred):
                 )
                 .properties(height=220)
             )
-            st.altair_chart(chart, use_container_width=True)
+            st.altair_chart(chart, use_container_width=True,
+                            key=f"hpi_chart_{county_key}")
 
     with right:
         if annual:
-            _render_permits_split_chart(annual, ytd, badge)
+            _render_permits_split_chart(county_key, annual, ytd, badge)
         elif permit_rows:
             # Census BPS unavailable for this county but FRED's blended total
             # still is — fall back to the old single-series bar rather than
@@ -821,7 +934,8 @@ def _render_market_pricing(county_key, needs_row, fred):
                 )
                 .properties(height=220)
             )
-            st.altair_chart(pchart, use_container_width=True)
+            st.altair_chart(pchart, use_container_width=True,
+                            key=f"permits_fallback_{county_key}")
         if badge:
             dot = {"red": "🔴", "yellow": "🟡", "green": "🟢"}[badge["color"]]
             st.markdown(f"{dot} **{badge['label']}** — permits issued in "

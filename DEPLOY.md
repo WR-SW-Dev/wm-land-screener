@@ -30,6 +30,17 @@ so it deploys with the code — no separate copy needed.
    live server's own copy of `econ_dev_queue.json` from being edited directly (and
    drifting out of sync with git) once more than one person is using the site.
    Curation always happens locally, then commit → push → redeploy as usual.
+5. **Land Screener's own parcel data is never in git and won't exist on a new
+   server.** `output/*.csv` and `data/raw/*.geojson` (parcels, zoning, flood,
+   wetlands, buildings, FLU, soil, roads — one set per configured city) are all
+   gitignored cache, built by running the pipeline, not shipped with the code.
+   A freshly deployed server has none of this — the Land Screener page will show
+   "No data found... Click ▶ Run" or a "Pipeline failed" error (confirmed
+   2026-08-03 on the wr-mac-studio-1 dev box: `output/` was completely empty
+   because the pipeline had simply never been run there). This is a one-time
+   step per server/city, not something that needs repeating — once built, the
+   cache persists on disk and only needs a manual "Refresh" if you want newer
+   source data later.
 
 ## Steps
 
@@ -76,7 +87,23 @@ sudo systemctl daemon-reload
 sudo systemctl restart wm-land-screener
 ```
 
-### 4. Verify
+### 4. Populate Land Screener's parcel data (first deploy only)
+Run the pipeline once per configured city (`config.py: CITIES` — currently
+`grand_haven`, `gh_township`, `spring_lake_twp`) so `output/` and
+`data/raw/*.geojson` exist. Skip this step on a repeat deploy to an already-set-up
+server — it's one-time per server, not part of the regular code-update cycle.
+```bash
+cd /home/ubuntu/wm-land-screener/src
+../.venv/bin/python3 pipeline.py --city grand_haven
+../.venv/bin/python3 pipeline.py --city gh_township
+../.venv/bin/python3 pipeline.py --city spring_lake_twp
+```
+Each city takes a minute or two (downloads parcels/zoning/flood/wetlands/buildings/
+FLU/soil/roads live from ~7 external services) and prints a summary of parcels
+loaded / passed filters when done. If one fails, it's most likely a transient
+network issue with one of those services — just re-run that city.
+
+### 5. Verify
 ```bash
 systemctl status wm-land-screener --no-pager      # should be active (running)
 journalctl -u wm-land-screener -n 40 --no-pager   # check for startup errors
@@ -93,6 +120,9 @@ sudo systemctl restart wm-land-screener
 ## Notes
 - The only server-specific unknown is **step 2** (how the box pulls code / whether
   there's an auto-deploy hook). Whoever set up the server should confirm/adapt that
-  line; steps 1, 3, and 4 are standard regardless.
+  line; steps 1, 3, and 5 are standard regardless.
+- Step 4 (populate parcel data) is **one-time per server**, not part of the regular
+  update cycle — skip it once a server already has its `output/`/`data/raw/`
+  parcel caches, same as step 1 (credentials) usually only matters on first setup.
 - After go-live, the workflow is: curate/develop locally → merge to `main` →
-  push to GitHub → repeat these deploy steps (usually just steps 2–4).
+  push to GitHub → repeat these deploy steps (usually just steps 2, 3, and 5).

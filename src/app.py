@@ -132,6 +132,11 @@ h2, h3 { color: var(--wr-teal) !important; font-family: Arial, sans-serif !impor
 .stButton button:hover {
     background-color: #5a8a8c !important;
 }
+.stButton button:disabled, .stButton button:disabled:hover {
+    background-color: var(--wr-warm) !important;
+    color: var(--wr-gray) !important;
+    cursor: not-allowed !important;
+}
 
 /* ── Download button ── */
 .stDownloadButton button {

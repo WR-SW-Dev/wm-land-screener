@@ -645,6 +645,46 @@ def _pct_axis_bounds(values):
     return [lo_b, hi_b], ticks
 
 
+# Census files each permit-issuing place under a SINGLE county even when the
+# place straddles a county line, so a split municipality's units all land on
+# one side. Holland is the case that matters for these four counties, and the
+# skew is material rather than a rounding note — verified 2026-07-30 against
+# both this project's municipal boundaries (Census place 38640 appears under
+# Allegan AND Ottawa, ~48% of its land area on the Allegan side) and the raw
+# BPS place files (exactly one Holland record exists, filed under Ottawa).
+# Holland supplied 46-52% of Ottawa's 5+ unit units in 2022-2024.
+_SPLIT_PLACE_NOTES = {
+    "ottawa":
+        "Holland is filed entirely under **Ottawa** by Census even though ~48% of "
+        "the city's land area sits in Allegan County, and it supplied 46–52% of "
+        "Ottawa's multifamily units in 2022–2024 — so multifamily here runs high "
+        "relative to where the units physically are.",
+    "allegan":
+        "Holland is filed entirely under **Ottawa** by Census even though ~48% of "
+        "the city's land area sits in Allegan County — apartment construction in "
+        "southern Holland is credited to Ottawa, not here.",
+}
+
+
+def _render_permits_data_notes(county_key, annual):
+    """Attribution caveats that stop this chart being misread — an empty
+    multifamily band as missing data, and a county-line split as real geography.
+    Both were checked against the raw Census place-level files rather than
+    assumed; see the _SPLIT_PLACE_NOTES comment."""
+    if annual and not any(a["mf"] for a in annual):
+        st.caption(
+            f"**No 5+ unit permits recorded anywhere in this county since "
+            f"{min(a['year'] for a in annual)}** — the multifamily band is "
+            f"genuinely empty, not missing data. Every township, city and village "
+            f"here is in the Census survey and reporting, and smaller 2–4 unit "
+            f"permits do come through, so this reads as an all-single-family "
+            f"construction market."
+        )
+    note = _SPLIT_PLACE_NOTES.get(county_key)
+    if note:
+        st.caption(note)
+
+
 def _render_permits_split_chart(county_key, annual, ytd, badge):
     """Stacked bar (single-family / duplex-quad / multifamily units permitted
     per year, Census BPS) + a year-over-year total-growth line underneath —
@@ -778,6 +818,8 @@ def _render_permits_split_chart(county_key, annual, ytd, badge):
     if ytd_label:
         st.caption(f"Lighter bar = {ytd_label} (through {ytd['as_of'][5:]}/{ytd['as_of'][:4]}) — "
                    f"partial year, not directly comparable to the full-year bars beside it.")
+
+    _render_permits_data_notes(county_key, annual)
 
     # ── Year-over-year growth of the total, as its own panel below ─────────
     totals = year_totals

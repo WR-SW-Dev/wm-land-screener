@@ -3,7 +3,11 @@ Section 1 — Market Feasibility UI (Streamlit).
 
 Pure rendering — no auth, no page config — so it can be exercised by a
 standalone harness as well as embedded in app_shell. The shell supplies the
-Executive/Analyst `view` string and an `on_continue` callback (Market → Land).
+Executive/Analyst `view` string and an `on_continue` callback, used only as
+an escape hatch if county data fails to load — Market Feasibility and Land
+Screener are otherwise independent sections (no carry-forward as of
+2026-08-03 — Land Screener's pipeline only covers 3 Ottawa-area cities,
+far short of Market Feasibility's 4-county/109-municipality reach).
 
 Executive view is two tiers:
   1. PRIMARY — a county choropleth shaded by housing *units needed* (from the
@@ -32,6 +36,7 @@ from market.housing_needs import load_housing_needs
 from market import econ_dev
 from market import competition
 from market import fred as fred_data_mod
+from market import zillow as zillow_data_mod
 from market import census_bps as census_bps_mod
 import config
 from config import DEMAND_WEIGHTS
@@ -152,7 +157,8 @@ def _acs_table(frame, name_label):
 def _market_data():
     """Cached: scored ACS frame, county housing-needs frame, boundary FCs, the
     scored municipal (all city/township) frame + boundaries, Opportunity Zone
-    tract polygons, and FRED pricing/momentum data."""
+    tract polygons, FRED pricing/momentum data, ZORI rent-trend data, and
+    ZHVI home-value-trend data."""
     df = add_demand_score(load_market_metrics())
     needs = load_housing_needs(df)
     bounds = load_boundaries()
@@ -164,7 +170,17 @@ def _market_data():
     except Exception as e:                       # noqa: BLE001
         print(f"  [warn] FRED data unavailable: {e}")
         fred = {"mortgage_rate": [], "state_hpi": [], "counties": {}}
-    return df, needs, bounds, muni, muni_bounds, oz, fred
+    try:
+        zori = zillow_data_mod.load_zori_data()
+    except Exception as e:                       # noqa: BLE001
+        print(f"  [warn] ZORI data unavailable: {e}")
+        zori = {"counties": {}, "metros": {}}
+    try:
+        zhvi = zillow_data_mod.load_zhvi_data()
+    except Exception as e:                       # noqa: BLE001
+        print(f"  [warn] ZHVI data unavailable: {e}")
+        zhvi = {"counties": {}, "state": []}
+    return df, needs, bounds, muni, muni_bounds, oz, fred, zori, zhvi
 
 
 def _fval(row, col):
@@ -186,7 +202,7 @@ def _metric_grid(row):
     c3.metric(_FMT["median_gross_rent"][0],   _fval(row, "median_gross_rent"))
     c3b.metric(_FMT["median_home_value"][0],  _fval(row, "median_home_value"),
                help="Median value of owner-occupied homes (ACS) — not the same as "
-                    "the FHFA price-index appreciation shown in Market Pricing below.")
+                    "the Zillow ZHVI figure shown in Market Pricing below.")
 
     c4, c5, c6 = st.columns(3)
     c4.metric(_FMT["rental_vacancy_rate"][0], rv_display,
@@ -645,6 +661,72 @@ def _pct_axis_bounds(values):
     return [lo_b, hi_b], ticks
 
 
+def _render_yoy_growth_chart(rows, chart_key, hollow_caption=None):
+    """Shared year-over-year growth line — zero-line reference, blue/red
+    up-down point coloring, and a hollow marker + dashed connector for a
+    provisional (partial-year) final point. `rows` is a list of
+    {year, pct, provisional} dicts. Used by the permits, rent, and
+    home-value trend panels so all three read as one consistent visual
+    language instead of three near-identical hand-copied charts.
+
+    Every layer shares ONE explicit y encoding (same field, same pinned
+    domain, same tick values) — this is load-bearing, not cosmetic: with the
+    domain left to Vega to infer, this layered chart's shared y-scale could
+    resolve to the zero-reference layer's degenerate [0, 0] domain instead
+    of the union across layers, collapsing every point onto the zero line
+    with a single "0" axis label. Pinning the domain makes that state
+    unreachable."""
+    import altair as alt
+
+    gdf = pd.DataFrame(rows)
+    gdf["sign"] = gdf["pct"].apply(lambda v: "up" if v >= 0 else "down")
+    hist = gdf[~gdf["provisional"]]
+    prov = gdf[gdf["provisional"]]
+    color_scale = alt.Scale(domain=["up", "down"], range=["#2a78d6", "#e34948"])
+    year_order = list(gdf["year"])
+
+    y_domain, y_ticks = _pct_axis_bounds(gdf["pct"])
+    y_enc = alt.Y(
+        "pct:Q", title="YoY change",
+        scale=alt.Scale(domain=y_domain, nice=False, zero=False, clamp=True),
+        axis=alt.Axis(values=y_ticks, grid=True,
+                      labelExpr="(datum.value > 0 ? '+' : '') + datum.value + '%'"),
+    )
+    x_enc = alt.X("year:N", title=None, sort=year_order)
+    pct_tip = alt.Tooltip("pct:Q", title="YoY", format="+.1f")
+
+    layers = [alt.Chart(pd.DataFrame({"pct": [0.0]}))
+              .mark_rule(strokeDash=[4, 4], color="#c3c2b7").encode(y=y_enc)]
+    if not hist.empty:
+        layers.append(
+            alt.Chart(hist).mark_line(color="#9ca3af", strokeWidth=2)
+            .encode(x=x_enc, y=y_enc))
+    if not prov.empty and not hist.empty:
+        connect_df = pd.concat([hist.iloc[[-1]], prov])
+        layers.append(
+            alt.Chart(connect_df).mark_line(color="#9ca3af", strokeWidth=2, strokeDash=[4, 4])
+            .encode(x=x_enc, y=y_enc))
+    if not hist.empty:
+        layers.append(
+            alt.Chart(hist).mark_point(filled=True, size=90)
+            .encode(x=x_enc, y=y_enc,
+                   color=alt.Color("sign:N", scale=color_scale, legend=None),
+                   tooltip=["year", pct_tip]))
+    if not prov.empty:
+        layers.append(
+            alt.Chart(prov).mark_point(filled=False, size=90, strokeWidth=2)
+            .encode(x=x_enc, y=y_enc,
+                   color=alt.Color("sign:N", scale=color_scale, legend=None),
+                   tooltip=["year", pct_tip]))
+    # 150: the pinned axis renders real tick labels, and the rotated year
+    # labels below need the extra room or Vega's fit-autosize squeezes the
+    # plot area itself.
+    chart = alt.layer(*layers).properties(height=150)
+    st.altair_chart(chart, use_container_width=True, key=chart_key)
+    if not prov.empty and hollow_caption:
+        st.caption(hollow_caption)
+
+
 # Census files each permit-issuing place under a SINGLE county even when the
 # place straddles a county line, so a split municipality's units all land on
 # one side. Holland is the case that matters for these four counties, and the
@@ -695,6 +777,8 @@ def _render_permits_split_chart(county_key, annual, ytd, badge):
     available, comparing the same partial period in both years rather than
     a partial year against a full one."""
     import altair as alt
+
+    st.markdown("###### Permits trend (Census Building Permits Survey)")
 
     bar_rows = []
     for a in annual:
@@ -838,79 +922,22 @@ def _render_permits_split_chart(county_key, annual, ytd, badge):
             growth_rows.append({"year": ytd_label, "pct": pct, "provisional": True})
 
     if growth_rows:
-        gdf = pd.DataFrame(growth_rows)
-        gdf["sign"] = gdf["pct"].apply(lambda v: "up" if v >= 0 else "down")
-        hist = gdf[~gdf["provisional"]]
-        prov = gdf[gdf["provisional"]]
-        color_scale = alt.Scale(domain=["up", "down"], range=["#2a78d6", "#e34948"])
-        year_order = years_sorted + ([ytd_label] if ytd_label else [])
-
-        st.markdown("<div style='font-size:13px;color:#666;margin-top:6px;'>"
-                    "Year-over-year change, total units permitted</div>",
-                    unsafe_allow_html=True)
-
-        # Every layer shares ONE explicit y encoding — same field name, same
-        # pinned domain, same tick values. This is load-bearing, not cosmetic:
-        # with the domain left to Vega to infer, this layered chart's shared
-        # y-scale could resolve to the zero-reference layer's degenerate
-        # [0, 0] domain instead of the union across layers, which collapses
-        # every point onto the zero line and leaves the axis with a single "0"
-        # label. Pinning the domain makes that state unreachable — and gives
-        # the panel the numbered gridlines it should have had regardless.
-        y_domain, y_ticks = _pct_axis_bounds(gdf["pct"])
-        y_enc = alt.Y(
-            "pct:Q", title="YoY change",
-            scale=alt.Scale(domain=y_domain, nice=False, zero=False, clamp=True),
-            axis=alt.Axis(values=y_ticks, grid=True,
-                          labelExpr="(datum.value > 0 ? '+' : '') + datum.value + '%'"),
-        )
-        x_enc = alt.X("year:N", title=None, sort=year_order)
-        pct_tip = alt.Tooltip("pct:Q", title="YoY", format="+.1f")
-
-        # Zero baseline, drawn from the same field as the data layers so the
-        # shared scale has nothing ambiguous to resolve.
-        layers = [alt.Chart(pd.DataFrame({"pct": [0.0]}))
-                  .mark_rule(strokeDash=[4, 4], color="#c3c2b7").encode(y=y_enc)]
-        if not hist.empty:
-            layers.append(
-                alt.Chart(hist).mark_line(color="#9ca3af", strokeWidth=2)
-                .encode(x=x_enc, y=y_enc))
-        if not prov.empty and not hist.empty:
-            connect_df = pd.concat([hist.iloc[[-1]], prov])
-            layers.append(
-                alt.Chart(connect_df).mark_line(color="#9ca3af", strokeWidth=2, strokeDash=[4, 4])
-                .encode(x=x_enc, y=y_enc))
-        if not hist.empty:
-            layers.append(
-                alt.Chart(hist).mark_point(filled=True, size=90)
-                .encode(x=x_enc, y=y_enc,
-                       color=alt.Color("sign:N", scale=color_scale, legend=None),
-                       tooltip=["year", pct_tip]))
-        if not prov.empty:
-            layers.append(
-                alt.Chart(prov).mark_point(filled=False, size=90, strokeWidth=2)
-                .encode(x=x_enc, y=y_enc,
-                       color=alt.Color("sign:N", scale=color_scale, legend=None),
-                       tooltip=["year", pct_tip]))
-        # 150 (was 120): the pinned axis now renders real tick labels, and the
-        # rotated year labels below need the extra room or Vega's fit-autosize
-        # squeezes the plot area itself.
-        growth_chart = alt.layer(*layers).properties(height=150)
-        st.altair_chart(growth_chart, use_container_width=True,
-                        key=f"permits_growth_{county_key}")
-        if ytd_label:
-            st.caption(f"Hollow point = {ytd_label} vs the same months in the prior year "
-                       f"(not a full-year comparison).")
+        st.caption("Year-over-year change, total units permitted")
+        hollow_caption = (f"Hollow point = {ytd_label} vs the same months in the prior year "
+                          f"(not a full-year comparison).") if ytd_label else None
+        _render_yoy_growth_chart(growth_rows, f"permits_growth_{county_key}", hollow_caption)
 
 
-def _render_market_pricing(county_key, needs_row, fred):
-    """Market Pricing & Momentum (FRED): HPI trend + permits vs the HNA need."""
-    import altair as alt
-
-    metrics = fred_data_mod.hpi_metrics(county_key, fred)
-    chart_rows = fred_data_mod.hpi_chart_frame(county_key, fred)
+def _render_market_pricing(county_key, needs_row, fred, zori=None, zhvi=None):
+    """Market Pricing & Momentum (Zillow ZHVI/ZORI + Census BPS + FRED): home
+    value trend, rent trend, and permits vs the HNA need. FRED still supplies
+    the momentum badge's permits total and the mortgage-rate banner above
+    this section — only the HPI panel itself was swapped for ZHVI (see
+    config.py's ZHVI note for why)."""
     permit_rows = fred_data_mod.permits_recent(county_key, fred)
     badge = fred_data_mod.momentum_badge(county_key, fred, needs_row)
+    value_metrics = zillow_data_mod.value_metrics(county_key, zhvi) if zhvi else None
+    value_growth_rows = zillow_data_mod.value_yoy_frame(county_key, zhvi) if zhvi else []
     # Structure-type split (single-family / duplex-quad / multifamily) comes
     # straight from Census's own county BPS files, not FRED — confirmed live
     # 2026-07-30 that FRED's county permit series has no such breakdown for
@@ -921,41 +948,65 @@ def _render_market_pricing(county_key, needs_row, fred):
     annual = bps_annual.get("annual", [])
     ytd = bps_annual.get("ytd")
 
-    if not metrics and not permit_rows and not annual:
-        return  # no FRED or Census data for this county — skip the section quietly
+    if not value_metrics and not permit_rows and not annual:
+        return  # no Zillow/FRED/Census data for this county — skip the section quietly
 
     st.markdown("##### Market pricing & momentum")
-    st.caption("Is the market already responding to this need? Home-price "
-               "appreciation and building-permit activity (FHFA / Census, via FRED).")
+    st.caption("Is the market already responding to this need? Home-value "
+               "appreciation and building-permit activity (Zillow / Census).")
     left, right = st.columns(2)
 
     with left:
-        if metrics:
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Home-price YoY", f"{metrics['yoy_pct']:+.1f}%",
-                      help=f"FHFA All-Transactions HPI, {metrics['latest_year']} vs prior year.")
-            m2.metric("5-yr cumulative", f"{metrics['cum_5y_pct']:+.1f}%"
-                      if metrics["cum_5y_pct"] is not None else "—")
-            m3.metric("vs Michigan", f"{metrics['vs_state_delta']:+.1f} pts"
-                      if metrics["vs_state_delta"] is not None else "—",
-                      help="This county's YoY appreciation minus the state's YoY appreciation.")
-        if chart_rows:
-            cdf = pd.DataFrame(chart_rows)
-            chart = (
-                alt.Chart(cdf)
-                .mark_line(point=True)
-                .encode(
-                    x=alt.X("year:N", title=None),
-                    y=alt.Y("index:Q", title="Index (rebased to 100)"),
-                    color=alt.Color("series:N", title=None,
-                                    scale=alt.Scale(domain=["County", "Michigan"],
-                                                    range=["#779FA1", "#9ca3af"])),
-                    tooltip=["year", "series", alt.Tooltip("index:Q", format=".1f")],
-                )
-                .properties(height=220)
-            )
-            st.altair_chart(chart, use_container_width=True,
-                            key=f"hpi_chart_{county_key}")
+        st.markdown("###### Home value trend (Zillow Home Value Index)")
+        if value_metrics:
+            v1, v2, v3 = st.columns(3)
+            v1.metric("Typical home value", f"${value_metrics['latest_value']:,.0f}",
+                      help=f"ZHVI, {value_metrics['latest_year']}. Zillow's own smoothed, "
+                           "seasonally adjusted estimate for the middle tier of homes — "
+                           "a valuation model, not a recorded sale price.")
+            v2.metric("Value YoY", f"{value_metrics['yoy_pct']:+.1f}%",
+                      help=f"ZHVI, {value_metrics['latest_year']} vs prior year.")
+            v3.metric("vs Michigan", f"{value_metrics['vs_state_delta']:+.1f} pts"
+                      if value_metrics["vs_state_delta"] is not None else "—",
+                      help="This county's YoY value growth minus Michigan's YoY value growth.")
+
+        if len(value_growth_rows) >= 2:
+            hollow_caption = (f"Hollow point = {value_growth_rows[-1]['year']}, based on a "
+                              f"partial year of data (not directly comparable to the "
+                              f"full-year points beside it).") if value_growth_rows[-1]["provisional"] else None
+            _render_yoy_growth_chart(value_growth_rows, f"value_growth_{county_key}", hollow_caption)
+        elif value_metrics and value_metrics["n_years"] < 3:
+            yr_word = "year" if value_metrics["n_years"] == 1 else "years"
+            st.caption(f"{needs_row['label']}'s home-value index only has "
+                       f"{value_metrics['n_years']} {yr_word} of annual data so far — "
+                       f"not enough yet for a year-over-year growth chart.")
+        if value_metrics or value_growth_rows:
+            st.caption("Data provided by Zillow Group.")
+
+        rent_metrics = zillow_data_mod.rent_metrics(county_key, zori) if zori else None
+        rent_growth_rows = zillow_data_mod.rent_yoy_frame(county_key, zori) if zori else []
+        if rent_metrics or rent_growth_rows:
+            st.write("")
+            st.markdown("###### Rent trend (Zillow Observed Rent Index)")
+            if rent_metrics:
+                r1, r2 = st.columns(2)
+                r1.metric("Typical rent", f"${rent_metrics['latest_value']:,.0f}/mo",
+                          help=f"ZORI asking rent, {rent_metrics['latest_year']}. This is "
+                               "what a new resident would pay today.")
+                r2.metric("Rent YoY", f"{rent_metrics['yoy_pct']:+.1f}%",
+                          help=f"ZORI, {rent_metrics['latest_year']} vs prior year.")
+
+            if len(rent_growth_rows) >= 2:
+                hollow_caption = (f"Hollow point = {rent_growth_rows[-1]['year']}, based on a "
+                                  f"partial year of data (not directly comparable to the "
+                                  f"full-year points beside it).") if rent_growth_rows[-1]["provisional"] else None
+                _render_yoy_growth_chart(rent_growth_rows, f"rent_growth_{county_key}", hollow_caption)
+            elif rent_metrics and rent_metrics["n_years"] < 3:
+                yr_word = "year" if rent_metrics["n_years"] == 1 else "years"
+                st.caption(f"{needs_row['label']}'s rent index only has "
+                           f"{rent_metrics['n_years']} {yr_word} of annual data so far — "
+                           f"not enough yet for a year-over-year growth chart.")
+            st.caption("Data provided by Zillow Group.")
 
     with right:
         if annual:
@@ -989,7 +1040,7 @@ def _render_market_pricing(county_key, needs_row, fred):
                        "the need — matches the heat map's red=more-need convention.")
 
 
-def _render_county_drilldown(county_key, needs, acs_df, fred=None):
+def _render_county_drilldown(county_key, needs, acs_df, fred=None, zori=None, zhvi=None):
     needs_row = needs.set_index("key").loc[county_key]
     st.markdown(f"#### {needs_row['label']} — housing need")
     st.caption(f"Source: {needs_row['report']}. Gap = new units needed over "
@@ -1007,7 +1058,7 @@ def _render_county_drilldown(county_key, needs, acs_df, fred=None):
 
     if fred:
         st.write("")
-        _render_market_pricing(county_key, needs_row, fred)
+        _render_market_pricing(county_key, needs_row, fred, zori, zhvi)
 
     st.write("")
     _render_rental_by_income(county_key, needs)
@@ -1722,7 +1773,7 @@ def render_market(view: str, on_continue):
     st.subheader("1. Market Feasibility")
 
     try:
-        df, needs, bounds, muni, muni_bounds, oz, fred = _market_data()
+        df, needs, bounds, muni, muni_bounds, oz, fred, zori, zhvi = _market_data()
     except Exception as e:                       # noqa: BLE001
         st.error(f"Couldn't load market data: {e}")
         st.button("Continue to Land Screener →", on_click=on_continue, type="primary")
@@ -1746,7 +1797,6 @@ def render_market(view: str, on_continue):
     county_labels = needs["label"].tolist()
     county_keys   = needs["key"].tolist()
     label_by_key  = dict(zip(county_keys, county_labels))
-    sel_label = st.session_state.get("submarket") or "Grand Haven"
 
     # Zoom state machine: "counties" overview, or a county key (zoomed to municipalities).
     # selected_county_key tracks which county's detail panel shows beneath the
@@ -1826,7 +1876,7 @@ def render_market(view: str, on_continue):
                 st.markdown(f"##### {sel_county_label} — county detail")
                 st.button("Go to municipal breakdown →", on_click=_zoom_to_municipal,
                           args=(selected_key,))
-                _render_county_drilldown(selected_key, needs, df, fred=fred)
+                _render_county_drilldown(selected_key, needs, df, fred=fred, zori=zori, zhvi=zhvi)
 
         else:  # zoomed into a county → municipal view
             county_key = level
@@ -1877,21 +1927,15 @@ def render_market(view: str, on_continue):
             # longer repeats here — it lives in the county detail panel,
             # one "Back to counties" click away (see the "counties" branch
             # above), so it isn't shown in two places.
-            picked = _render_municipalities(county_key,
-                                            muni, muni_bounds, pins=pins,
-                                            competition_pins_list=comp_pins,
-                                            oz_fc=county_oz)
-            if picked:
-                sel_label = picked
+            _render_municipalities(county_key,
+                                   muni, muni_bounds, pins=pins,
+                                   competition_pins_list=comp_pins,
+                                   oz_fc=county_oz)
 
     elif view == "Compare":
         _render_compare(df, muni)
 
     else:  # Analyst — full tables
-        sel_label = st.selectbox("Carry submarket into Land Screener",
-                                 df[df["tier"] == "submarket"]["label"].tolist(),
-                                 key="market_submarket")
-
         st.markdown("##### County housing need — units needed (5-year gap)")
         need_cols = {"label": "County", "study_period": "Study period",
                      "total_units": "Total units", "rental_units": "Rental units",
@@ -1953,8 +1997,3 @@ def render_market(view: str, on_continue):
                        "curation is done locally by the analyst — the Executive "
                        "view's pins and summaries already reflect the latest "
                        "curated data.")
-
-    st.session_state.submarket = sel_label
-    st.success(f"Selected submarket **{sel_label}** will carry into the Land "
-               f"Screener.", icon="🔗")
-    st.button("Continue to Land Screener →", on_click=on_continue, type="primary")

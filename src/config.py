@@ -545,6 +545,48 @@ MARKET_COUNTIES = [
     {"key": "allegan",  "label": "Allegan County",  "geo": {"type": "county", "state": "26", "county": "005"}},
 ]
 
+# ── Zillow Observed Rent Index (ZORI) — rent trend layer ─────────────────────
+# Free public CSVs, no API key. County-level ZORI has no matching state-level
+# file (Zillow only publishes ZORI at national/metro/county/city/zip — verified
+# 2026-08-03), so each county is paired with its own Zillow "Metro" (msa) series
+# as the comparison baseline instead of a state one. The county file's own
+# "Metro" column uses the current CBSA name ("Grand Rapids-Kentwood, MI") but
+# the metro-level file itself still uses the older name ("Grand Rapids, MI") —
+# a vintage mismatch between Zillow's own exports, not a real geography change —
+# so the mapping below is hardcoded from what's actually in the metro file
+# rather than joined on that column's text.
+ZORI_COUNTY_URL = "https://files.zillowstatic.com/research/public_csvs/zori/County_zori_uc_sfrcondomfr_sm_month.csv"
+ZORI_METRO_URL  = "https://files.zillowstatic.com/research/public_csvs/zori/Metro_zori_uc_sfrcondomfr_sm_month.csv"
+ZORI_METRO_FOR_COUNTY = {
+    "ottawa":   "Grand Rapids, MI",
+    "kent":     "Grand Rapids, MI",
+    "muskegon": "Muskegon, MI",
+    "allegan":  "Holland, MI",
+}
+# Potential future upgrade: a county-vs-Michigan rent comparison (matching the
+# ZHVI home-value panel's county-vs-state pattern below) instead of
+# county-vs-metro, by averaging ZORI across all MI counties Zillow covers.
+# Deliberately not built — Zillow publishes no official state ZORI, so this
+# would be a self-constructed composite, not a real published number, and
+# would need household-count weighting (already available from the ACS
+# demographics data) so small rural counties don't distort it. Metro is
+# Zillow's own real figure and arguably more locally meaningful anyway, so
+# it's the baseline for now.
+
+# ── Zillow Home Value Index (ZHVI) — home-value trend layer ──────────────────
+# Replaces the FHFA-via-FRED HPI panel (src/market/fred.py still provides the
+# mortgage-rate banner, the momentum badge's permits total, and its own
+# standalone HPI history — none of that changed). Same free-CSV, no-API-key
+# pattern as ZORI above, but ZHVI DOES have a real state-level file (verified
+# 2026-08-03), so this panel can do a genuine county-vs-Michigan comparison
+# instead of ZORI's metro workaround. "tier_0.33_0.67" = Zillow's smoothed,
+# seasonally-adjusted typical value for the middle third of homes by price —
+# a dollar estimate from Zillow's own valuation model, not a recorded-sale
+# price like FHFA's repeat-transactions index it replaces; noted in the UI's
+# own tooltip, not just here.
+ZHVI_COUNTY_URL = "https://files.zillowstatic.com/research/public_csvs/zhvi/County_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+ZHVI_STATE_URL  = "https://files.zillowstatic.com/research/public_csvs/zhvi/State_zhvi_uc_sfrcondo_tier_0.33_0.67_sm_sa_month.csv"
+
 # ── FRED (Federal Reserve Economic Data) — pricing/momentum layer ────────────
 # County HPI (FHFA All-Transactions Index, annual): series `ATNHPIUS<FIPS>A`.
 # State HPI baseline (quarterly): `MISTHPI`, annualized for comparison.

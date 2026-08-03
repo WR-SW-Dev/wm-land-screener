@@ -160,8 +160,6 @@ IS_ADMIN   = _user_data.get("role") == "admin"
 # "home" = landing page; otherwise one of the three section keys.
 if "section" not in st.session_state:
     st.session_state.section = "home"
-if "submarket" not in st.session_state:
-    st.session_state.submarket = None        # carry-forward demo: Market → Land
 if "parcel" not in st.session_state:
     st.session_state.parcel = None            # carry-forward demo: Land → Financial
 
@@ -174,7 +172,8 @@ SECTIONS = [
               "feasibility score per vacant parcel. (Your existing tool.)"},
     {"key": "financial", "num": "3", "title": "Financial Review",
      "blurb": "How much do we offer? Automated underwriting and a recommended "
-              "land-pricing strategy for a chosen parcel."},
+              "land-pricing strategy for a chosen parcel.",
+     "coming_soon": True},
 ]
 SECTION_KEYS = [s["key"] for s in SECTIONS]
 
@@ -202,14 +201,19 @@ def render_home():
                 """,
                 unsafe_allow_html=True,
             )
-            st.button(f"Open {s['title']} →", key=f"open_{s['key']}",
-                      use_container_width=True, on_click=go, args=(s["key"],))
+            if s.get("coming_soon"):
+                st.button(f"Open {s['title']} →", key=f"open_{s['key']}",
+                          use_container_width=True, disabled=True,
+                          help="Coming soon — not built yet.")
+            else:
+                st.button(f"Open {s['title']} →", key=f"open_{s['key']}",
+                          use_container_width=True, on_click=go, args=(s["key"],))
 
     st.write("")
     st.markdown(
         '<p style="color:var(--wr-gray); font-size:14px; margin-top:8px;">'
-        'Each section flows into the next — your market pick filters the land '
-        'search, and your parcel pick pre-loads the financials.</p>',
+        'Market Feasibility and Land Screener run independently for now — '
+        'Financial Review is coming soon.</p>',
         unsafe_allow_html=True,
     )
 
@@ -230,8 +234,13 @@ def render_stepper(current_key: str):
     # Quick-jump + home buttons
     nav = st.columns([1, 1, 1, 3])
     for col, s in zip(nav[:3], SECTIONS):
-        col.button(s["title"], key=f"jump_{s['key']}",
-                   use_container_width=True, on_click=go, args=(s["key"],))
+        if s.get("coming_soon"):
+            col.button(s["title"], key=f"jump_{s['key']}",
+                       use_container_width=True, disabled=True,
+                       help="Coming soon — not built yet.")
+        else:
+            col.button(s["title"], key=f"jump_{s['key']}",
+                       use_container_width=True, on_click=go, args=(s["key"],))
     nav[3].button("⌂ Back to home", key="back_home",
                   use_container_width=True, on_click=go, args=("home",))
     st.divider()
@@ -273,11 +282,11 @@ def render_land():
         </style>""",
         unsafe_allow_html=True,
     )
-    # Carry-forward (submarket → land) is wired in a later step. For now, embed
-    # the real Land Screener exactly as-is via app.render_land().
-    sm = st.session_state.submarket
-    if sm:
-        st.caption(f"🔗 Submarket carried from Market Feasibility: **{sm}**")
+    # Market → Land carry-forward removed 2026-08-03 — Land Screener's real
+    # pipeline only covers 3 Ottawa-area cities, but Market Feasibility's map
+    # now spans 4 counties / 109 municipalities, so the carried name was
+    # usually one Land Screener had no data for. The two sections are
+    # independent until Land Screener's coverage catches up.
     app.render_land(_username, _user_data, IS_ADMIN, _authenticator)
 
 

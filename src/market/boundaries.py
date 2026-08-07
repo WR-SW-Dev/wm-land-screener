@@ -183,8 +183,34 @@ def load_opportunity_zones(refresh: bool = False) -> dict:
 
 
 if __name__ == "__main__":
-    fc = load_boundaries(refresh="--refresh" in sys.argv)
+    # `--refresh` rebuilds ALL THREE cached datasets in this module, not just
+    # load_boundaries(). Before 2026-08-08 it only touched load_boundaries()
+    # despite DEPLOY.md documenting `python3 -m market.boundaries --refresh`
+    # as "the" boundaries refresh — the county-adding pass on 2026-08-07 was
+    # verified locally (calling load_municipal_boundaries(refresh=True)
+    # directly) but that direct call was never exercised through this CLI, so
+    # the gap wasn't caught until a live AssertionError clicking into Grand
+    # Traverse's municipal breakdown on a server that had only run this CLI:
+    # market_municipal_boundaries.geojson and market_opportunity_zones.geojson
+    # kept their stale 4-county cache while market_boundaries.geojson alone
+    # got the new counties, so the two new counties had zero municipal/OZ
+    # features and folium's tooltip builder crashed on the empty property set.
+    refresh = "--refresh" in sys.argv
+    fc = load_boundaries(refresh=refresh)
     for f in fc["features"]:
         p = f["properties"]
         gtype = f["geometry"]["type"] if f.get("geometry") else "NONE"
         print(f"{p['key']:<18} {p['tier']:<10} {gtype}")
+
+    muni_fc = load_municipal_boundaries(refresh=refresh)
+    from collections import Counter
+    counts = Counter(f["properties"].get("county_key") for f in muni_fc["features"])
+    print(f"\nmunicipal boundaries: {len(muni_fc['features'])} features")
+    for k, n in sorted(counts.items()):
+        print(f"  {k:<18} {n}")
+
+    oz_fc = load_opportunity_zones(refresh=refresh)
+    oz_counts = Counter(f["properties"].get("county_key") for f in oz_fc["features"])
+    print(f"\nopportunity zones: {len(oz_fc['features'])} tracts")
+    for k, n in sorted(oz_counts.items()):
+        print(f"  {k:<18} {n}")

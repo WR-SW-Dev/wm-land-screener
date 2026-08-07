@@ -1,163 +1,147 @@
-# Deploying the new unified app to production
+# Deploying to production (wr-mac-studio-1)
 
-The app was restructured from a standalone Land Screener into a **navigation
-shell** (home page → Market Feasibility → Land Screener → Financial Review),
-behind a login. Production currently still runs the OLD standalone version.
-These are the one-time changes to bring the live site up to the current `main`.
+Production runs on **wr-mac-studio-1**, a Mac Studio reachable over Tailscale
+SSH (alias `wr-mac-studio-1` in `~/.ssh/config`), as the `dev` user at
+`~/apps/wm-land-screener`. It is fully set up already — credentials, Python
+deps, and Land Screener's parcel caches all exist there. These steps are the
+**regular update cycle**, not a first-time setup.
 
-**Requires SSH access to the EC2 box (`ubuntu@44.213.16.32`).**
+**This replaced deploying to an EC2 box on 2026-08-07.** That process (systemd,
+`ubuntu@44.213.16.32:/opt/wm-land-screener`, the `live` git remote) is retired —
+don't follow it or push to `live` without being told to revive it explicitly.
+`git remote -v` still lists `live`; that's leftover, not a live target.
 
-## What changed (why these steps exist)
-1. **Entry point moved.** The app now starts from `src/app_shell.py`, not
-   `src/app.py` (which is now an internal module). The systemd service in the
-   repo has been updated to launch `app_shell.py`; it must be re-copied + the
-   service reloaded.
-2. **Login + Census key file is not in git.** `credentials.yaml` is gitignored
-   (it holds the login usernames/passwords **and** the Census API key the market
-   data reads). The server needs its own copy — easiest is to copy the working
-   local one up.
-3. **New libraries.** Maps, login, PDF parsing, etc. add dependencies
-   (`streamlit-authenticator`, `folium`, `streamlit-folium`, `branca`,
-   `pdfplumber`, …). `requirements.txt` must be re-installed.
+## How the app runs there
 
-The economic-development data (`data/econ_dev_queue.json`) IS tracked in git now,
-so it deploys with the code — no separate copy needed.
+A system LaunchDaemon, not a plain terminal session:
 
-4. **Econ-dev scanning/curation is local-only.** The systemd service now sets
-   `WR_DEPLOY_ENV=production`, which hides the Scan now / review inbox / editable
-   kept-items tables in the deployed app — everyone using the live site sees only
-   the read-only Executive pins + summary. This is deliberate: it stops the
-   live server's own copy of `econ_dev_queue.json` from being edited directly (and
-   drifting out of sync with git) once more than one person is using the site.
-   Curation always happens locally, then commit → push → redeploy as usual.
-5. **Land Screener's own parcel data is never in git and won't exist on a new
-   server.** `output/*.csv` and `data/raw/*.geojson` (parcels, zoning, flood,
-   wetlands, buildings, FLU, soil, roads — one set per configured city) are all
-   gitignored cache, built by running the pipeline, not shipped with the code.
-   A freshly deployed server has none of this — the Land Screener page will show
-   "No data found... Click ▶ Run" or a "Pipeline failed" error (confirmed
-   2026-08-03 on the wr-mac-studio-1 dev box: `output/` was completely empty
-   because the pipeline had simply never been run there). This is a one-time
-   step per server/city, not something that needs repeating — once built, the
-   cache persists on disk and only needs a manual "Refresh" if you want newer
-   source data later.
+- Label: `co.wakerobin.wm-land-screener`
+- Plist: `/Library/LaunchDaemons/co.wakerobin.wm-land-screener.plist`
+- Runs: `.venv/bin/streamlit run src/app_shell.py --server.port=8501 --server.address=127.0.0.1`
+- `KeepAlive=true`, `RunAtLoad=true` — it restarts itself if it dies or the
+  Studio reboots. **`WR_DEPLOY_ENV=production`** is set in its environment,
+  which hides the local econ-dev scan/curation UI (same gate as the old EC2
+  setup) — curation still happens from a real local machine, not this box.
+- Logs: `~/apps/wm-land-screener/logs/{stdout,stderr,streamlit}.log`
 
-## Steps
-
-### 1. Make sure `credentials.yaml` on the server has the logins AND the Census key
-The server's `credentials.yaml` (gitignored, never in the repo) must contain the
-existing login block **and** a new `census:` block — the market-feasibility
-features read the Census API key from here. The prior setup predates this key, so
-it likely needs adding:
-
-```yaml
-census:
-  api_key: <ASK SADIE FOR THE KEY — not stored in git>
-credentials:
-  usernames:
-    ...        # existing logins (unchanged)
-cookie:
-  ...          # existing cookie block (unchanged)
-```
-
-Either add the `census:` block to the server's existing file, **or** copy the
-current working local file up (it already has logins + key):
+**Restart command — use this, not a manual `kill`:**
 ```bash
-scp credentials.yaml ubuntu@44.213.16.32:/home/ubuntu/wm-land-screener/credentials.yaml
+ssh wr-mac-studio-1 'sudo launchctl kickstart -k system/co.wakerobin.wm-land-screener'
 ```
+`KeepAlive` will respawn a killed process on its own, usually within a couple
+of seconds — faster than a manual relaunch can react. Manually killing the PID
+and starting a replacement by hand races the daemon's own respawn, produces a
+confusing "Port 8501 is not available" collision in stderr.log when both try to
+bind at once, and leaves you unsure afterward which process is actually
+launchd's supervised one. Check with `launchctl print
+system/co.wakerobin.wm-land-screener` (look at its `pid` field) if it's ever
+unclear which process is running.
 
-### 2. SSH in and update the code
+## Regular update — code changed, no new county/data source
+
 ```bash
-ssh ubuntu@44.213.16.32
-cd /home/ubuntu/wm-land-screener
-
-# ⚠️ CONFIRM how this box takes updates. If the working dir tracks GitHub:
-git fetch origin
-git checkout main          # the working dir may currently be on another branch
-git pull origin main
-# (If a `git push live` post-receive hook is used instead, deploy that way and
-#  skip this block — but still do steps 3–4 below.)
+ssh wr-mac-studio-1 'cd ~/apps/wm-land-screener && git status --short && echo --- && git pull'
+# (this is exactly what the sync-studio skill does)
+ssh wr-mac-studio-1 'sudo launchctl kickstart -k system/co.wakerobin.wm-land-screener'
 ```
+Then verify (see below). Skip the cache-refresh section unless the change
+touched `config.py: MARKET_COUNTIES` or added/changed a market data source.
 
-### 3. Install dependencies + update the service
-```bash
-./.venv/bin/pip install -r requirements.txt
-sudo cp deploy/wm-land-screener.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl restart wm-land-screener
-```
+## Market Feasibility cache refresh — ONLY when MARKET_COUNTIES or a data source changed
 
-### 4. Populate Land Screener's parcel data (first deploy only)
-Run the pipeline once per configured city (`config.py: CITIES` — currently
-`grand_haven`, `gh_township`, `spring_lake_twp`) so `output/` and
-`data/raw/*.geojson` exist. Skip this step on a repeat deploy to an already-set-up
-server — it's one-time per server, not part of the regular code-update cycle.
-```bash
-cd /home/ubuntu/wm-land-screener/src
-../.venv/bin/python3 pipeline.py --city grand_haven
-../.venv/bin/python3 pipeline.py --city gh_township
-../.venv/bin/python3 pipeline.py --city spring_lake_twp
-```
-Each city takes a minute or two (downloads parcels/zoning/flood/wetlands/buildings/
-FLU/soil/roads live from ~7 external services) and prints a summary of parcels
-loaded / passed filters when done. If one fails, it's most likely a transient
-network issue with one of those services — just re-run that city.
-
-### 4b. Refresh the Market Feasibility caches (ONLY when the county list changed)
-**Deploying the code alone does not add a new county to the live site.** Every
+**A code deploy alone does not add a new county to the live site.** Every
 Market Feasibility loader short-circuits to its gitignored `data/raw/market_*`
-cache (`if _CACHE.exists() and not refresh`), the app never passes
-`refresh=True`, and there is no in-app refresh button. So a server that already
-has caches keeps serving the OLD county list indefinitely — the code looks
-deployed, the map just silently shows the previous counties. Run this whenever
-`config.py: MARKET_COUNTIES` changes (e.g. Grand Traverse + Antrim, 2026-08-07):
+cache, and nothing calls `refresh=True` automatically. Worse: `_market_data()`
+in `render.py` is `@st.cache_data` with no TTL, so even after refreshing the
+on-disk files, the **already-running process keeps serving what it loaded at
+startup** — refreshing the cache and restarting the service are one action,
+not two. Do the refresh, THEN restart, in that order (restarting a cold
+process before refreshing just means it caches the stale data instead).
+
 ```bash
-cd /home/ubuntu/wm-land-screener/src
-../.venv/bin/python3 -m market.demographics --refresh
-../.venv/bin/python3 -c "import sys; sys.path.insert(0,'.'); \
-  from market.demographics import load_municipal_metrics; load_municipal_metrics(refresh=True)"
-../.venv/bin/python3 -m market.boundaries   --refresh
-../.venv/bin/python3 -m market.fred         --refresh
-../.venv/bin/python3 -m market.zillow       --refresh
-../.venv/bin/python3 -m market.census_bps   --refresh
-../.venv/bin/python3 -m market.lodes        --refresh
-sudo systemctl restart wm-land-screener
+ssh wr-mac-studio-1 'cd ~/apps/wm-land-screener/src && \
+  ../.venv/bin/python3 -m market.demographics --refresh && \
+  ../.venv/bin/python3 -c "import sys; sys.path.insert(0,\".\"); \
+    from market.demographics import load_municipal_metrics; load_municipal_metrics(refresh=True)" && \
+  ../.venv/bin/python3 -m market.boundaries   --refresh && \
+  ../.venv/bin/python3 -m market.fred         --refresh && \
+  ../.venv/bin/python3 -m market.zillow       --refresh && \
+  ../.venv/bin/python3 -m market.census_bps   --refresh && \
+  ../.venv/bin/python3 -m market.lodes        --refresh'
 ```
-Two gotchas, both hit while doing this locally:
+Two gotchas, both real, both hit while doing this on 2026-08-07:
 - `market.demographics --refresh` only rebuilds the **county** frame; the
-  municipal frame needs the separate explicit call above.
+  municipal frame needs the separate explicit call shown above.
 - A FRED series can come back **empty** on a transient fetch failure and still
-  get written to the cache (Ottawa's unemployment did exactly this on the first
-  local run, then populated fine on a re-run). After refreshing, confirm every
-  county has all three series before trusting it:
+  get written to the cache. After refreshing, confirm every county has all
+  three series before trusting it:
 ```bash
-../.venv/bin/python3 -c "import sys; sys.path.insert(0,'.'); \
-  from market import fred as F; d=F.load_fred_data(); \
-  [print(k, len(v.get('unemployment') or []), len(v.get('permits') or []), \
-   len(v.get('hpi') or [])) for k,v in sorted(d['counties'].items())]"
+ssh wr-mac-studio-1 'cd ~/apps/wm-land-screener/src && ../.venv/bin/python3 -c "
+import sys; sys.path.insert(0,\".\")
+from market import fred as F
+d = F.load_fred_data()
+for k,v in sorted(d[\"counties\"].items()):
+    print(k, len(v.get(\"unemployment\") or []), len(v.get(\"permits\") or []), len(v.get(\"hpi\") or []))
+"'
 ```
-Any county showing a `0` means re-run the FRED refresh.
+Any county showing a `0` means re-run the FRED refresh for that layer.
 
-### 5. Verify
+Then restart:
 ```bash
-systemctl status wm-land-screener --no-pager      # should be active (running)
-journalctl -u wm-land-screener -n 40 --no-pager   # check for startup errors
-```
-Then open the site — you should get the **login page**, then the full three-section app.
-
-## Rollback (if something's wrong)
-```bash
-cd /home/ubuntu/wm-land-screener
-git checkout <previous-commit>       # e.g. the commit that was live before
-sudo systemctl restart wm-land-screener
+ssh wr-mac-studio-1 'sudo launchctl kickstart -k system/co.wakerobin.wm-land-screener'
 ```
 
-## Notes
-- The only server-specific unknown is **step 2** (how the box pulls code / whether
-  there's an auto-deploy hook). Whoever set up the server should confirm/adapt that
-  line; steps 1, 3, and 5 are standard regardless.
-- Step 4 (populate parcel data) is **one-time per server**, not part of the regular
-  update cycle — skip it once a server already has its `output/`/`data/raw/`
-  parcel caches, same as step 1 (credentials) usually only matters on first setup.
-- After go-live, the workflow is: curate/develop locally → merge to `main` →
-  push to GitHub → repeat these deploy steps (usually just steps 2, 3, and 5).
+## Verify
+
+```bash
+ssh wr-mac-studio-1 'curl -s http://127.0.0.1:8501/_stcore/health'   # expect: ok
+ssh wr-mac-studio-1 'launchctl print system/co.wakerobin.wm-land-screener | grep -E "state|pid|last exit"'
+```
+If checking a market-feasibility change specifically, also confirm the county
+list directly rather than trusting the process is fresh:
+```bash
+ssh wr-mac-studio-1 'cd ~/apps/wm-land-screener/src && ../.venv/bin/python3 -c "
+import sys; sys.path.insert(0,\".\")
+from market import render as R
+_, needs, *_ = R._market_data()
+print(sorted(needs[\"key\"].tolist()))
+"'
+```
+
+## Rollback
+
+```bash
+ssh wr-mac-studio-1 'cd ~/apps/wm-land-screener && git log --oneline -5'   # find the commit to roll back to
+ssh wr-mac-studio-1 'cd ~/apps/wm-land-screener && git checkout <previous-commit>'
+ssh wr-mac-studio-1 'sudo launchctl kickstart -k system/co.wakerobin.wm-land-screener'
+```
+
+## One-time setup (already done on wr-mac-studio-1 — reference only, e.g. for a new target)
+
+These are NOT part of the regular cycle above. Recorded here in case this ever
+needs setting up again from scratch, on this box or a new one.
+
+1. **`credentials.yaml`** (gitignored) needs `credentials:`/`cookie:` (login)
+   plus `census:` and `fred:` API key blocks. Confirmed present on
+   wr-mac-studio-1 as of 2026-08-07.
+2. **Python deps**: `.venv/bin/pip install -r requirements.txt` — confirmed
+   installed (streamlit, folium, streamlit-folium, branca, pdfplumber,
+   streamlit-authenticator all present) as of 2026-08-07.
+3. **Land Screener's own parcel data** (`output/*.csv`, `data/raw/*.geojson`
+   for parcels/zoning/flood/wetlands/buildings/FLU/soil/roads) is gitignored,
+   built by running the pipeline once per configured city — NOT shipped with
+   the code. Confirmed populated on wr-mac-studio-1 (grand_haven, gh_township,
+   spring_lake_twp) as of 2026-08-07. If ever missing on a fresh target:
+   ```bash
+   cd ~/apps/wm-land-screener/src
+   ../.venv/bin/python3 pipeline.py --city grand_haven
+   ../.venv/bin/python3 pipeline.py --city gh_township
+   ../.venv/bin/python3 pipeline.py --city spring_lake_twp
+   ```
+   Each city takes a minute or two (downloads live from ~7 external services);
+   a failure is most likely a transient network issue with one of them — just
+   re-run that city.
+4. **The LaunchDaemon plist itself** — if it ever needs installing on a new
+   box, it must be copied to `/Library/LaunchDaemons/` (root-owned, requires
+   sudo) and loaded with `sudo launchctl load -w
+   /Library/LaunchDaemons/co.wakerobin.wm-land-screener.plist`.

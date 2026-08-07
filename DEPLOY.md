@@ -103,6 +103,41 @@ FLU/soil/roads live from ~7 external services) and prints a summary of parcels
 loaded / passed filters when done. If one fails, it's most likely a transient
 network issue with one of those services — just re-run that city.
 
+### 4b. Refresh the Market Feasibility caches (ONLY when the county list changed)
+**Deploying the code alone does not add a new county to the live site.** Every
+Market Feasibility loader short-circuits to its gitignored `data/raw/market_*`
+cache (`if _CACHE.exists() and not refresh`), the app never passes
+`refresh=True`, and there is no in-app refresh button. So a server that already
+has caches keeps serving the OLD county list indefinitely — the code looks
+deployed, the map just silently shows the previous counties. Run this whenever
+`config.py: MARKET_COUNTIES` changes (e.g. Grand Traverse + Antrim, 2026-08-07):
+```bash
+cd /home/ubuntu/wm-land-screener/src
+../.venv/bin/python3 -m market.demographics --refresh
+../.venv/bin/python3 -c "import sys; sys.path.insert(0,'.'); \
+  from market.demographics import load_municipal_metrics; load_municipal_metrics(refresh=True)"
+../.venv/bin/python3 -m market.boundaries   --refresh
+../.venv/bin/python3 -m market.fred         --refresh
+../.venv/bin/python3 -m market.zillow       --refresh
+../.venv/bin/python3 -m market.census_bps   --refresh
+../.venv/bin/python3 -m market.lodes        --refresh
+sudo systemctl restart wm-land-screener
+```
+Two gotchas, both hit while doing this locally:
+- `market.demographics --refresh` only rebuilds the **county** frame; the
+  municipal frame needs the separate explicit call above.
+- A FRED series can come back **empty** on a transient fetch failure and still
+  get written to the cache (Ottawa's unemployment did exactly this on the first
+  local run, then populated fine on a re-run). After refreshing, confirm every
+  county has all three series before trusting it:
+```bash
+../.venv/bin/python3 -c "import sys; sys.path.insert(0,'.'); \
+  from market import fred as F; d=F.load_fred_data(); \
+  [print(k, len(v.get('unemployment') or []), len(v.get('permits') or []), \
+   len(v.get('hpi') or [])) for k,v in sorted(d['counties'].items())]"
+```
+Any county showing a `0` means re-run the FRED refresh.
+
 ### 5. Verify
 ```bash
 systemctl status wm-land-screener --no-pager      # should be active (running)

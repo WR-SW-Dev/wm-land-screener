@@ -5,7 +5,7 @@ structure type (1-unit / 2-4 unit / 5+ unit), fetched directly from Census.
 FRED's own county permit series (BPPRIV0<FIPS>, used elsewhere in fred.py) is
 a single blended total with no structure-type breakdown — confirmed live
 against the FRED API 2026-07-30 (searched every phrasing; nothing exists for
-any of the four counties beyond the one combined series). So this data has
+any of the market counties beyond the one combined series). So this data has
 to come straight from Census's own county files instead of through FRED.
 
 Source: https://www2.census.gov/econ/bps/County/ — annual co{year}a.txt (one

@@ -38,6 +38,7 @@ from market import competition
 from market import fred as fred_data_mod
 from market import zillow as zillow_data_mod
 from market import census_bps as census_bps_mod
+from market import lodes as lodes_mod
 import config
 from config import DEMAND_WEIGHTS
 
@@ -95,18 +96,37 @@ _DEMAND_FACTOR_HELP = {
 # count yet still be proportionally starved. A county below the floor clamps to
 # green — that's the intended "skip it" signal, not a bug.
 #
-# CEILING (fully red) is calibrated just above the current 4-county maximum, so
+# CEILING (fully red) is calibrated just above the current maximum, so
 # genuinely similar counties render as similar colors rather than being stretched
-# across the full ramp. Jul 2026 actuals: intensity_total 132–148/1k HH,
-# intensity_rental 35–46/1k HH, total_units 6.2k–33.9k, rental_units 1.9k–11.8k.
-# As Phase 4 adds counties, figures should land inside these ceilings; if one
-# exceeds a ceiling, `_scale_bounds()` widens it rather than silently clipping —
-# treat that as a signal to revisit these constants.
+# across the full ramp. If a county exceeds a ceiling, `_scale_bounds()` widens
+# it rather than silently clipping — treat that as a signal to revisit these.
+#
+# The intensity ceilings were RAISED (160→290, 55→95) on 2026-08-07 when Grand
+# Traverse and Antrim were added. Grand Traverse alone forced it: 287 total /
+# 90 rental per 1k HH, roughly double every West Michigan county. Antrim (161
+# total / 29 rental) sits essentially at the OLD ceiling and needed no change.
+#
+# Consequence, accepted deliberately: the four West Michigan counties now render
+# in a green-to-yellow band rather than orange-to-red. That is not a loss of
+# information — they only span 132–148, so they were always a tight cluster; the
+# old 160 ceiling was drawn just above Ottawa, which made them look near-maximum
+# by construction. With a real 287 in the data, moderate is the honest position.
+#
+# A tertile/tier treatment (like the municipal demand-score map) was considered
+# and rejected: units-needed is a real self-explanatory metric, unlike the
+# synthetic 0–100 demand score, and on six counties tertiles would split Allegan
+# (136.5) from Muskegon (135.6) across a tier boundary while painting Kent
+# "low need" despite its being the largest absolute gap in the tool (33.9k units).
+#
+# Aug 2026 actuals: intensity_total 132–287/1k HH, intensity_rental 29–90/1k HH,
+# total_units 1.8k–33.9k, rental_units 0.3k–11.8k. Note both raw-count metrics
+# now have counties BELOW their floor (Antrim: 1,771 total / 321 rental) — that
+# clamps to green, which is the intended "too small to bother" signal, not a bug.
 _NEED_SCALE_BOUNDS = {
     "total_units":      (3_000, 36_000),
     "rental_units":     (1_000, 13_000),
-    "intensity_total":  (60, 160),
-    "intensity_rental": (20, 55),
+    "intensity_total":  (60, 290),
+    "intensity_rental": (20, 95),
 }
 
 
@@ -180,7 +200,12 @@ def _market_data():
     except Exception as e:                       # noqa: BLE001
         print(f"  [warn] ZHVI data unavailable: {e}")
         zhvi = {"counties": {}, "state": []}
-    return df, needs, bounds, muni, muni_bounds, oz, fred, zori, zhvi
+    try:
+        lodes = lodes_mod.load_lodes_data()
+    except Exception as e:                       # noqa: BLE001
+        print(f"  [warn] LODES data unavailable: {e}")
+        lodes = {"year": None, "counties": {}}
+    return df, needs, bounds, muni, muni_bounds, oz, fred, zori, zhvi, lodes
 
 
 def _fval(row, col):
@@ -500,7 +525,7 @@ def _add_opportunity_zones(m, oz_fc):
 
 
 def _build_county_map(bounds, needs, value_col, caption, pins=None, oz_fc=None):
-    """Choropleth of the four counties shaded by the chosen units-needed metric."""
+    """Choropleth of the market counties shaded by the chosen units-needed metric."""
     counties = [f for f in bounds["features"] if f["properties"]["tier"] == "county"]
     vals = needs.set_index("key")
     present = [v for k, v in vals[value_col].items() if v is not None]
@@ -515,7 +540,15 @@ def _build_county_map(bounds, needs, value_col, caption, pins=None, oz_fc=None):
         f["properties"]["total_units"]  = f"{int(rec['total_units']):,}"  if rec is not None else "—"
         f["properties"]["rental_units"] = f"{int(rec['rental_units']):,}" if rec is not None else "—"
 
-    m = folium.Map(location=[43.05, -85.9], zoom_start=8,
+    # Frame the map on whatever counties are actually configured, rather than a
+    # hardcoded center/zoom. This previously pinned [43.05, -85.9] @ zoom 8,
+    # calibrated to the original four West Michigan counties — so when Grand
+    # Traverse and Antrim were added (2026-08-07) the map still opened zoomed
+    # into West Michigan with the two new counties off-screen entirely. A
+    # county added to config.MARKET_COUNTIES now reframes the view on its own.
+    # See _center_zoom_for_bounds for why this isn't folium's fit_bounds.
+    center, zoom = _center_zoom_for_bounds(_bbox_of_features(counties))
+    m = folium.Map(location=center, zoom_start=zoom,
                    tiles="cartodbpositron", control_scale=True)
     folium.GeoJson(
         {"type": "FeatureCollection", "features": counties},
@@ -810,7 +843,7 @@ def _render_growth_bar_chart(points, chart_key, bar_color="#779FA1"):
 
 # Census files each permit-issuing place under a SINGLE county even when the
 # place straddles a county line, so a split municipality's units all land on
-# one side. Holland is the case that matters for these four counties, and the
+# one side. Holland is the case that matters for these counties, and the
 # skew is material rather than a rounding note — verified 2026-07-30 against
 # both this project's municipal boundaries (Census place 38640 appears under
 # Allegan AND Ottawa, ~48% of its land area on the Allegan side) and the raw
@@ -1121,11 +1154,12 @@ def _render_market_pricing(county_key, needs_row, fred, zori=None, zhvi=None):
                        "the need — matches the heat map's red=more-need convention.")
 
 
-def _render_growth_drivers(county_key, needs_row, fred):
+def _render_growth_drivers(county_key, needs_row, fred, lodes=None):
     """Added 2026-08-06: what's actually driving the housing need — labor-
     market health (FRED unemployment rate) alongside population/household
     growth (same Bowen HNA report as the need figures above, not a new
-    source — see housing_needs.py's population_growth/household_growth)."""
+    source — see housing_needs.py's population_growth/household_growth).
+    In-commuters (Census LODES) added 2026-08-07 — see market/lodes.py."""
     from market.housing_needs import HOUSING_NEEDS
 
     rec = HOUSING_NEEDS.get(county_key, {})
@@ -1133,15 +1167,16 @@ def _render_growth_drivers(county_key, needs_row, fred):
     hh_points = rec.get("household_growth")
     unemp = fred_data_mod.unemployment_metrics(county_key, fred) if fred else None
     unemp_rows = fred_data_mod.unemployment_chart_frame(county_key, fred) if fred else []
+    commute = lodes_mod.commuter_metrics(county_key, lodes) if lodes else None
 
-    if not (pop_points or hh_points or unemp):
+    if not (pop_points or hh_points or unemp or commute):
         return  # no data for this county — skip the section quietly
 
     st.markdown("##### Growth drivers")
     st.caption("What's pulling people here, and is the population base itself "
-               "growing? (BLS unemployment rate via FRED; population & "
-               "households via Census/ESRI, same report as the housing-need "
-               "figures above.)")
+               "growing? (BLS unemployment rate via FRED; in-commuters via "
+               "Census LODES; population & households via Census/ESRI, same "
+               "report as the housing-need figures above.)")
     left, right = st.columns(2)
 
     with left:
@@ -1161,6 +1196,30 @@ def _render_growth_drivers(county_key, needs_row, fred):
                    "against population size (unlike a resident-employment "
                    "count, which would just partly echo the population chart).")
 
+        if commute:
+            st.markdown("###### In-commuters (Census LODES)")
+            k1, k2 = st.columns(2)
+            k1.metric("Jobs filled by non-residents", f"{commute['in_commuters']:,.0f}",
+                      help=f"Jobs located in this county held by someone living "
+                           f"outside it. Counted as JOBS, not people — this is LODES "
+                           f"'All Jobs', so anyone holding two jobs here counts twice "
+                           f"(the true headcount runs ~4-7% lower). The share tile is "
+                           f"unaffected by that.")
+            k2.metric("Share of county jobs",
+                      f"{commute['share_pct']:.1f}%" if commute["share_pct"] is not None else "—",
+                      help=f"Out of {commute['jobs']:,} total jobs located in the "
+                           f"county. A high share means the local economy already "
+                           f"supports far more workers than the local housing stock "
+                           f"holds. Robust to the multiple-jobholding caveat above — "
+                           f"counting primary jobs only moves this by under 0.2 pts.")
+            st.caption(f"Workers the economy already supports but local housing "
+                       f"doesn't — the pool BTR product could capture. Each county's "
+                       f"own Housing Needs Assessment lists attracting them as an "
+                       f"explicit opportunity. Census LEHD LODES {commute['year']} "
+                       f"(latest published). Jobs sit at the worksite the employer "
+                       f"reports, so remote workers still count against their office "
+                       f"— read this as jobs based here, not daily car trips.")
+
     with right:
         if pop_points:
             st.markdown("###### Population (Census / ESRI, via Bowen HNA)")
@@ -1171,12 +1230,33 @@ def _render_growth_drivers(county_key, needs_row, fred):
         if pop_points and hh_points and len(pop_points) >= 2 and len(hh_points) >= 2:
             pop_pct = (pop_points[-1]["value"] / pop_points[-2]["value"] - 1) * 100
             hh_pct = (hh_points[-1]["value"] / hh_points[-2]["value"] - 1) * 100
-            faster = "Households" if hh_pct > pop_pct else "Population"
-            slower = "population" if hh_pct > pop_pct else "households"
-            implication = ("smaller households are forming faster than people are arriving"
-                           if hh_pct > pop_pct else
-                           "households aren't keeping pace with population growth")
-            st.caption(f"{faster} growing faster than {slower} "
+            # Classify on the ROUNDED figures, so the wording can never contradict
+            # the numbers printed right beside it (a true -0.04% would otherwise
+            # read "shrinking" next to a displayed "-0.0%").
+            pop_r, hh_r = round(pop_pct, 1), round(hh_pct, 1)
+            if pop_r < 0 and hh_r > 0:
+                # Muskegon and Antrim. The original single "households growing
+                # faster than population / people are arriving" phrasing was
+                # wrong here — nobody is arriving, the population is leaving —
+                # and it's the case that most needs explaining, since falling
+                # population reads as "skip this market" until you notice the
+                # household count is what actually fills homes.
+                headline = "Households still growing while population shrinks"
+                # No em-dash inside the implication — the caption template
+                # already supplies one before it.
+                implication = ("average household size is falling, so housing demand "
+                               "holds up even as population declines; it's households, "
+                               "not headcount, that fill homes")
+            elif pop_r <= 0 and hh_r <= 0:
+                headline = "Population and households both flat or shrinking"
+                implication = "no household-formation tailwind here"
+            elif hh_pct > pop_pct:
+                headline = "Households growing faster than population"
+                implication = "smaller households are forming faster than people are arriving"
+            else:
+                headline = "Population growing faster than households"
+                implication = "households aren't keeping pace with population growth"
+            st.caption(f"{headline} "
                        f"({hh_pct:+.1f}% households vs {pop_pct:+.1f}% population, "
                        f"{pop_points[-2]['year']}–{pop_points[-1]['year']}) — {implication}.")
         st.caption("Solid bars = actual Census counts. Lighter bar = ESRI's "
@@ -1184,7 +1264,38 @@ def _render_growth_drivers(county_key, needs_row, fred):
                    "above — not a new source.")
 
 
-def _render_county_drilldown(county_key, needs, acs_df, fred=None, zori=None, zhvi=None):
+# NOTE — a per-county "where this gap comes from" callout was added here on
+# 2026-08-07 for Grand Traverse alone, then REMOVED the same day. Recording why,
+# so it isn't rebuilt the same way:
+#
+# Bowen's gap tables decompose each county's need into components (household
+# growth, balanced market, replacement, commuter/external support, severe cost
+# burden, step-down, less pipeline). Grand Traverse's rental gap turns out to be
+# 53% severe cost burden + 31% commuter/external with renter household growth
+# actually NEGATIVE (-143) — i.e. displacement and in-commuting, not
+# in-migration. Genuinely useful for reading the number correctly.
+#
+# But singling out one county implies the others differ, and that was never
+# tested. Grand Traverse was picked because its INTENSITY was the outlier (282
+# vs 132-148/1k HH) and its component table was already open — not because its
+# COMPOSITION was checked against anyone else's. It isn't even the strongest
+# case: Antrim is more displacement-driven on every measure (rental 58.6% cost
+# burden, household growth -10.6%, combined household growth just +21 vs Grand
+# Traverse's +948). Components for Ottawa/Kent/Muskegon/Allegan were never
+# pulled at all — they're in those counties' own separate reports, all of which
+# are available in OneDrive under Market Research.
+#
+# If this comes back, do it UNIFORMLY for all six counties (transcribe each
+# report's component rows into housing_needs.py alongside the by-income bands,
+# then render one consistent breakdown) rather than as a per-county exception.
+# Note also that Bowen never frames a gap by driver itself — its own discussion
+# only ranks affordability bands, and Grand Traverse's SWOT lists "positive
+# projected household growth" as a STRENGTH — so any by-driver emphasis is our
+# interpretation layered on their numbers, and needs to be labeled as such.
+
+
+def _render_county_drilldown(county_key, needs, acs_df, fred=None, zori=None, zhvi=None,
+                             lodes=None):
     needs_row = needs.set_index("key").loc[county_key]
     st.markdown(f"#### {needs_row['label']} — housing need")
     st.caption(f"Source: {needs_row['report']}. Gap = new units needed over "
@@ -1201,7 +1312,7 @@ def _render_county_drilldown(county_key, needs, acs_df, fred=None, zori=None, zh
                    f"1,000 existing households ({needs_row['households']:,.0f} households).")
 
     st.write("")
-    _render_growth_drivers(county_key, needs_row, fred)
+    _render_growth_drivers(county_key, needs_row, fred, lodes=lodes)
 
     if fred:
         st.write("")
@@ -1253,6 +1364,34 @@ def _bbox_of_features(features):
         if geom:
             walk(geom["coordinates"])
     return [[min(ys), min(xs)], [max(ys), max(xs)]]
+
+
+def _center_zoom_for_bounds(bbox, px_w=1000, px_h=650):
+    """(center, zoom_start) framing `bbox`, computed server-side.
+
+    Deliberately NOT folium's own `m.fit_bounds()`. fit_bounds emits a JS call
+    that Leaflet runs against the container's size AT LOAD, and inside
+    st_folium the container hasn't reached its final width/height by then — so
+    the center comes out right but the zoom is far too low (measured live
+    2026-08-07: the 6-county map landed on zoom 3, a whole-hemisphere view).
+    Same st_folium-doesn't-behave-like-a-saved-HTML-file class of problem as
+    the click-popup attempt documented in _build_county_map above.
+
+    Computing it here instead is deterministic and immune to container-size
+    timing. px_w/px_h are the map's rendered size; the zoom is whichever of the
+    two axes is more constraining, floored so the bbox always fits with margin.
+    """
+    (s, w), (n, e) = bbox
+    def _merc_y(lat):
+        lat = max(min(lat, 85.05112878), -85.05112878)
+        return math.log(math.tan(math.pi / 4 + math.radians(lat) / 2))
+    center = [(s + n) / 2, (w + e) / 2]
+    y_frac = (_merc_y(n) - _merc_y(s)) / (2 * math.pi)
+    x_frac = (e - w) / 360
+    if y_frac <= 0 or x_frac <= 0:
+        return center, 8
+    zoom = min(math.log2(px_h / (256 * y_frac)), math.log2(px_w / (256 * x_frac)))
+    return center, max(1, min(18, int(math.floor(zoom))))
 
 
 def _build_municipal_map(muni_bounds, muni_df, county_key, pins=None,
@@ -1920,7 +2059,7 @@ def render_market(view: str, on_continue):
     st.subheader("1. Market Feasibility")
 
     try:
-        df, needs, bounds, muni, muni_bounds, oz, fred, zori, zhvi = _market_data()
+        df, needs, bounds, muni, muni_bounds, oz, fred, zori, zhvi, lodes = _market_data()
     except Exception as e:                       # noqa: BLE001
         st.error(f"Couldn't load market data: {e}")
         st.button("Continue to Land Screener →", on_click=on_continue, type="primary")
@@ -1984,7 +2123,7 @@ def render_market(view: str, on_continue):
             show_oz = t2.checkbox(
                 "Show opportunity zones", key="oz_counties",
                 help="Overlay IRS-approved Opportunity Zone census tracts "
-                     "(MSHDA/state GIS) across all four counties.")
+                     "(MSHDA/state GIS) across all market counties.")
 
             pins = econ_pins(None, muni_bounds, bounds) if show_pins else None
             if show_pins:
@@ -2023,7 +2162,8 @@ def render_market(view: str, on_continue):
                 st.markdown(f"##### {sel_county_label} — county detail")
                 st.button("Go to municipal breakdown →", on_click=_zoom_to_municipal,
                           args=(selected_key,))
-                _render_county_drilldown(selected_key, needs, df, fred=fred, zori=zori, zhvi=zhvi)
+                _render_county_drilldown(selected_key, needs, df, fred=fred, zori=zori,
+                                         zhvi=zhvi, lodes=lodes)
 
         else:  # zoomed into a county → municipal view
             county_key = level

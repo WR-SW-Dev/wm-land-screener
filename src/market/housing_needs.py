@@ -1,14 +1,18 @@
 """
 County housing-gap ("units needed") data for the market-feasibility heat map.
 
-Figures are transcribed from the four West Michigan county Housing Needs
-Assessments — all produced by Bowen National Research using the same 5-year
-housing-gap methodology, so they're directly comparable (with a minor caveat
-that Ottawa/Kent are 2024–2029 and Allegan/Muskegon are 2022–2027).
+Figures are transcribed from the county Housing Needs Assessments covering the
+six market counties — all produced by Bowen National Research using the same
+5-year housing-gap methodology, so they're directly comparable (with a minor
+caveat that Ottawa/Kent are 2024–2029 while Allegan/Muskegon/Grand Traverse/
+Antrim are 2022–2027). Grand Traverse and Antrim differ in one structural way:
+they have no county-commissioned study of their own, and instead come from the
+per-county addenda of Bowen's 2023 10-county Northern Michigan regional HNA.
 
 Each county's total gap = rental + for-sale units needed over the 5-year period.
 `rental_by_income` breaks the rental gap into the report's own AMI/rent bands
-(Ottawa & Allegan use 4 bands; Kent & Muskegon use 5). `forsale_by_income`
+(Ottawa, Allegan, Grand Traverse & Antrim use 4 bands; Kent & Muskegon use 5).
+`forsale_by_income`
 breaks the for-sale gap into the SAME AMI bands (paired with price points
 instead of rents) — each county's report bands both tenures identically, so
 rental_by_income[i]["units"] + forsale_by_income[i]["units"] is a legitimate
@@ -186,6 +190,86 @@ HOUSING_NEEDS = {
             {"year": "2020", "value": 45_545},
             {"year": "2022", "value": 46_126},
             {"year": "2027", "value": 46_691, "projected": True},
+        ],
+    },
+    # ── Northern Michigan (added 2026-08-07) ─────────────────────────────────
+    # Both counties come from ONE report — Bowen's 2023 10-county Northern
+    # Michigan regional HNA — rather than a county-commissioned study of their
+    # own, so their figures live in that report's per-county addenda (Grand
+    # Traverse = Addendum G, Antrim = Addendum C) instead of a standalone PDF.
+    # Same 5-year gap methodology and the same 4 AMI bands as Ottawa/Allegan,
+    # so they're directly comparable; study period matches Muskegon/Allegan.
+    "grand_traverse": {
+        "label": "Grand Traverse County",
+        "study_period": "2022–2027",
+        "report": "Bowen National Research, Northern Michigan HNA, 2023 (Addendum G)",
+        "total_units": 11_361,
+        "rental_units": 3_569,
+        "forsale_units": 7_792,
+        "rental_by_income": [
+            {"ami": "≤50%",    "rent": "≤ $1,123",       "units": 2_358},
+            {"ami": "51–80%",  "rent": "$1,124–$1,797",  "units": 733},
+            {"ami": "81–120%", "rent": "$1,798–$2,697",  "units": 288},
+            {"ami": "121%+",   "rent": "$2,698+",        "units": 190},
+        ],
+        "forsale_by_income": [
+            {"ami": "≤50%",    "price": "≤ $149,833",         "units": 1_798},
+            {"ami": "51–80%",  "price": "$149,834–$239,733",  "units": 1_384},
+            {"ami": "81–120%", "price": "$239,734–$359,600",  "units": 2_569},
+            {"ami": "121%+",   "price": "$359,601+",          "units": 2_041},
+        ],
+        # Total Population p.G-2 / Total Households p.G-3 (Addendum G).
+        # Source: "2010, 2020 Census; ESRI; Urban Decision Group; Bowen
+        # National Research." Strongest growth of the six counties.
+        "population_growth": [
+            {"year": "2010", "value": 86_986},
+            {"year": "2020", "value": 95_238},
+            {"year": "2022", "value": 96_832},
+            {"year": "2027", "value": 98_662, "projected": True},
+        ],
+        "household_growth": [
+            {"year": "2010", "value": 35_328},
+            {"year": "2020", "value": 39_819},
+            {"year": "2022", "value": 40_604},
+            {"year": "2027", "value": 41_553, "projected": True},
+        ],
+    },
+    "antrim": {
+        "label": "Antrim County",
+        "study_period": "2022–2027",
+        "report": "Bowen National Research, Northern Michigan HNA, 2023 (Addendum C)",
+        "total_units": 1_771,
+        "rental_units": 321,
+        "forsale_units": 1_450,
+        "rental_by_income": [
+            {"ami": "≤50%",    "rent": "≤ $981",         "units": 114},
+            {"ami": "51–80%",  "rent": "$982–$1,569",    "units": 114},
+            {"ami": "81–120%", "rent": "$1,570–$2,355",  "units": 66},
+            {"ami": "121%+",   "rent": "$2,356+",        "units": 27},
+        ],
+        "forsale_by_income": [
+            {"ami": "≤50%",    "price": "≤ $130,833",         "units": 265},
+            {"ami": "51–80%",  "price": "$130,834–$209,333",  "units": 239},
+            {"ami": "81–120%", "price": "$209,334–$314,000",  "units": 504},
+            {"ami": "121%+",   "price": "$314,001+",          "units": 442},
+        ],
+        # Total Population p.C-2 / Total Households p.C-3 (Addendum C).
+        # Source: "2010, 2020 Census; ESRI; Urban Decision Group; Bowen
+        # National Research." Second declining-population county in the tool
+        # (with Muskegon) — and the only one declining in BOTH the measured
+        # 2010→2020 window and the projection, where Muskegon's decline is
+        # projection-only. Households still tick up (+20).
+        "population_growth": [
+            {"year": "2010", "value": 23_580},
+            {"year": "2020", "value": 23_431},
+            {"year": "2022", "value": 23_171},
+            {"year": "2027", "value": 23_077, "projected": True},
+        ],
+        "household_growth": [
+            {"year": "2010", "value": 9_890},
+            {"year": "2020", "value": 10_147},
+            {"year": "2022", "value": 10_073},
+            {"year": "2027", "value": 10_093, "projected": True},
         ],
     },
 }

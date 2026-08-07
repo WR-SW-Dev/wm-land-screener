@@ -528,7 +528,10 @@ AFFORDABILITY_INCOME_SHARE = 0.30
 
 # ── Submarkets & competition geography ────────────────────────────────────────
 # Submarkets = the existing land-screener cities (Census county-subdivision FIPS,
-# all within Ottawa County 26139). Counties = tri-county competition/context band.
+# all within Ottawa County 26139). Counties = the market-feasibility context band:
+# four West Michigan counties plus two Northern Michigan ones (Grand Traverse,
+# Antrim) added 2026-08-07 — non-contiguous with the West MI cluster, deliberately
+# not distinguished on the map (same choropleth, same shared color scale).
 # `screener_key` links a submarket to its CITIES entry (Market → Land carry-fwd).
 MARKET_SUBMARKETS = [
     {"key": "grand_haven",    "label": "Grand Haven",        "screener_key": "grand_haven",
@@ -543,6 +546,11 @@ MARKET_COUNTIES = [
     {"key": "kent",     "label": "Kent County",     "geo": {"type": "county", "state": "26", "county": "081"}},
     {"key": "muskegon", "label": "Muskegon County", "geo": {"type": "county", "state": "26", "county": "121"}},
     {"key": "allegan",  "label": "Allegan County",  "geo": {"type": "county", "state": "26", "county": "005"}},
+    # Northern Michigan — separate Bowen HNA (2023 10-county regional study).
+    {"key": "grand_traverse", "label": "Grand Traverse County",
+     "geo": {"type": "county", "state": "26", "county": "055"}},
+    {"key": "antrim",         "label": "Antrim County",
+     "geo": {"type": "county", "state": "26", "county": "009"}},
 ]
 
 # ── Zillow Observed Rent Index (ZORI) — rent trend layer ─────────────────────
@@ -562,6 +570,12 @@ ZORI_METRO_FOR_COUNTY = {
     "kent":     "Grand Rapids, MI",
     "muskegon": "Muskegon, MI",
     "allegan":  "Holland, MI",
+    "grand_traverse": "Traverse City, MI",
+    # Antrim is deliberately absent: Zillow publishes NO county-level ZORI row
+    # for it at all (verified against the county CSV 2026-08-07) — not a short
+    # history like Allegan's, simply no series. `rent_metrics()` returns None on
+    # the empty observation list, so the rent sub-panel just doesn't render for
+    # Antrim; home value (ZHVI) is unaffected and covers all six counties.
 }
 # Potential future upgrade: a county-vs-Michigan rent comparison (matching the
 # ZHVI home-value panel's county-vs-state pattern below) instead of
@@ -608,6 +622,8 @@ FRED_COUNTY_ABBR = {
     "kent":     "KENT1",
     "muskegon": "MUSK1",
     "allegan":  "ALLE0",
+    "grand_traverse": "GRAN0",
+    "antrim":         "ANTR9",
 }
 
 # Momentum badge: % of a county's 5-yr HNA unit gap already covered by permits
@@ -640,6 +656,21 @@ DEMAND_BANDS = {
     "renter_share_pct":    (15.0, 55.0),   # 15% renters → 0 ; 55%+ → 1
     "rent_to_afford":      (0.40, 1.00),   # rent 40% of affordable → 0 ; 100%+ → 1
 }
+
+# ── Census LEHD LODES — in-commuters per county ───────────────────────────────
+# Origin-destination job counts by home/workplace census block, used to derive
+# "jobs in this county held by people who live elsewhere" (see market/lodes.py).
+# The Bowen HNAs publish this same figure per county; deriving it from their
+# underlying source instead keeps all six counties measured identically and
+# picks up new counties automatically.
+#
+# LODES_YEARS is tried newest-first — LODES lags ~2-3 years and 2022 was still
+# 404 as of 2026-08-07, so lodes.py walks back until a year resolves rather
+# than pinning one vintage that silently breaks later. JT00 = "All Jobs", the
+# same job type the reports' own commuting tables use.
+LODES_BASE_URL = "https://lehd.ces.census.gov/data/lodes/LODES8/mi/od"
+LODES_JOB_TYPE = "JT00"
+LODES_YEARS    = (2024, 2023, 2022, 2021, 2020)
 
 # ── Census TIGERweb boundary service (choropleth geometries) ──────────────────
 # tigerWMS_Current MapServer. Layer ids are discovered at runtime by name match

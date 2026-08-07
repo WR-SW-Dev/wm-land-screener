@@ -284,7 +284,7 @@ def render_land():
     )
     # Market → Land carry-forward removed 2026-08-03 — Land Screener's real
     # pipeline only covers 3 Ottawa-area cities, but Market Feasibility's map
-    # now spans 4 counties / 109 municipalities, so the carried name was
+    # now spans 6 counties / 100+ municipalities, so the carried name was
     # usually one Land Screener had no data for. The two sections are
     # independent until Land Screener's coverage catches up.
     app.render_land(_username, _user_data, IS_ADMIN, _authenticator)

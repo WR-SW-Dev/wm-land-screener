@@ -727,6 +727,87 @@ def _render_yoy_growth_chart(rows, chart_key, hollow_caption=None):
         st.caption(hollow_caption)
 
 
+def _render_rate_line_chart(rows, chart_key):
+    """Plain-% line — no rebasing, no YoY-growth transform. Used for
+    unemployment rate, which (unlike HPI/ZORI/ZHVI) is already a directly
+    comparable number year to year, so the honest chart is just the level
+    itself. `rows` is a list of {year, value} dicts."""
+    import altair as alt
+
+    df = pd.DataFrame(rows)
+    chart = (
+        alt.Chart(df)
+        .mark_line(point=True, color="#779FA1")
+        .encode(
+            x=alt.X("year:N", title=None),
+            y=alt.Y("value:Q", title="Unemployment rate (%)"),
+            tooltip=["year", alt.Tooltip("value:Q", format=".1f", title="Rate")],
+        )
+        .properties(height=150)
+    )
+    st.altair_chart(chart, use_container_width=True, key=chart_key)
+
+
+def _render_growth_bar_chart(points, chart_key, bar_color="#779FA1"):
+    """Bar chart over a handful of sparse points (e.g. 2010 / 2020 / current
+    estimate / projection) with a growth-% label above each bar showing its
+    change from the PRIOR bar — used for population/household growth, where
+    there are only 4 real data points with a 10-year gap between the first
+    two, so a smooth annual line (like the other growth charts) would
+    misrepresent it as a continuous trend. A `projected` point (not yet a
+    measured value) renders at reduced opacity, same convention already used
+    for the permits chart's YTD bar."""
+    import altair as alt
+
+    rows = []
+    for i, p in enumerate(points):
+        pct_label = None
+        if i > 0 and points[i - 1]["value"]:
+            pct = (p["value"] / points[i - 1]["value"] - 1) * 100
+            pct_label = f"{pct:+.1f}%"
+        rows.append({"year": p["year"], "value": p["value"],
+                     "projected": bool(p.get("projected")), "pct_label": pct_label})
+    df = pd.DataFrame(rows)
+    year_order = [r["year"] for r in rows]
+
+    # Headroom above the tallest bar so the growth-% label (drawn just above
+    # each bar via dy=-10) never gets clipped by the plot area's top edge —
+    # Vega's auto y-domain otherwise fits the bars exactly, leaving no room
+    # for text floating above the tallest one (caught live: the last bar's
+    # label was cut off in the real app since it's usually the tallest). A
+    # first attempt at 15% data-domain headroom wasn't enough — in a 140px
+    # chart that's only ~18px of actual pixel space, and the label itself
+    # (dy=-10 plus ~13px of text height) needs close to that just on its
+    # own, with zero margin for rendering variance. 30% headroom plus
+    # explicit chart-level top padding (fixed pixels, not data-relative)
+    # gives two independent safety margins instead of one tight one.
+    y_scale = alt.Scale(domain=[0, df["value"].max() * 1.3])
+    y_enc = alt.Y("value:Q", title=None, scale=y_scale, axis=alt.Axis(format=",.0f"))
+
+    bar = (
+        alt.Chart(df)
+        .mark_bar(color=bar_color)
+        .encode(
+            x=alt.X("year:N", title=None, sort=year_order),
+            y=y_enc,
+            opacity=alt.condition("datum.projected", alt.value(0.45), alt.value(1.0)),
+            tooltip=["year", alt.Tooltip("value:Q", format=",.0f")],
+        )
+    )
+    labeled = df[df["pct_label"].notna()]
+    layers = [bar]
+    if not labeled.empty:
+        labels = (
+            alt.Chart(labeled)
+            .mark_text(dy=-10, fontSize=11, fontWeight="bold", color=bar_color)
+            .encode(x=alt.X("year:N", sort=year_order), y=y_enc, text="pct_label",
+                    tooltip=["year", alt.Tooltip("pct_label:N", title="Growth")])
+        )
+        layers.append(labels)
+    chart = alt.layer(*layers).properties(height=140, padding={"top": 20, "left": 5, "right": 5, "bottom": 5})
+    st.altair_chart(chart, use_container_width=True, key=chart_key)
+
+
 # Census files each permit-issuing place under a SINGLE county even when the
 # place straddles a county line, so a split municipality's units all land on
 # one side. Holland is the case that matters for these four counties, and the
@@ -1040,6 +1121,69 @@ def _render_market_pricing(county_key, needs_row, fred, zori=None, zhvi=None):
                        "the need — matches the heat map's red=more-need convention.")
 
 
+def _render_growth_drivers(county_key, needs_row, fred):
+    """Added 2026-08-06: what's actually driving the housing need — labor-
+    market health (FRED unemployment rate) alongside population/household
+    growth (same Bowen HNA report as the need figures above, not a new
+    source — see housing_needs.py's population_growth/household_growth)."""
+    from market.housing_needs import HOUSING_NEEDS
+
+    rec = HOUSING_NEEDS.get(county_key, {})
+    pop_points = rec.get("population_growth")
+    hh_points = rec.get("household_growth")
+    unemp = fred_data_mod.unemployment_metrics(county_key, fred) if fred else None
+    unemp_rows = fred_data_mod.unemployment_chart_frame(county_key, fred) if fred else []
+
+    if not (pop_points or hh_points or unemp):
+        return  # no data for this county — skip the section quietly
+
+    st.markdown("##### Growth drivers")
+    st.caption("What's pulling people here, and is the population base itself "
+               "growing? (BLS unemployment rate via FRED; population & "
+               "households via Census/ESRI, same report as the housing-need "
+               "figures above.)")
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("###### Labor market (BLS, via FRED)")
+        if unemp:
+            u1, u2 = st.columns(2)
+            u1.metric("Unemployment rate", f"{unemp['latest_value']:.1f}%",
+                      help=f"BLS LAUS, {unemp['latest_date']}.")
+            u2.metric("vs 1 year ago",
+                      f"{unemp['delta_pts']:+.1f} pts" if unemp["delta_pts"] is not None else "—",
+                      help="Negative = unemployment fell (labor market tightened). "
+                           "Compared to the same month last year, not an annual "
+                           "average, so it isn't skewed by seasonal hiring patterns.")
+        if unemp_rows:
+            _render_rate_line_chart(unemp_rows, f"unemployment_{county_key}")
+        st.caption("A rate, not a raw employment count — already normalized "
+                   "against population size (unlike a resident-employment "
+                   "count, which would just partly echo the population chart).")
+
+    with right:
+        if pop_points:
+            st.markdown("###### Population (Census / ESRI, via Bowen HNA)")
+            _render_growth_bar_chart(pop_points, f"population_{county_key}", bar_color="#779FA1")
+        if hh_points:
+            st.markdown("###### Households (Census / ESRI, via Bowen HNA)")
+            _render_growth_bar_chart(hh_points, f"households_{county_key}", bar_color="#A67C52")
+        if pop_points and hh_points and len(pop_points) >= 2 and len(hh_points) >= 2:
+            pop_pct = (pop_points[-1]["value"] / pop_points[-2]["value"] - 1) * 100
+            hh_pct = (hh_points[-1]["value"] / hh_points[-2]["value"] - 1) * 100
+            faster = "Households" if hh_pct > pop_pct else "Population"
+            slower = "population" if hh_pct > pop_pct else "households"
+            implication = ("smaller households are forming faster than people are arriving"
+                           if hh_pct > pop_pct else
+                           "households aren't keeping pace with population growth")
+            st.caption(f"{faster} growing faster than {slower} "
+                       f"({hh_pct:+.1f}% households vs {pop_pct:+.1f}% population, "
+                       f"{pop_points[-2]['year']}–{pop_points[-1]['year']}) — {implication}.")
+        st.caption("Solid bars = actual Census counts. Lighter bar = ESRI's "
+                   "projection, same report/vendor as the housing-need figures "
+                   "above — not a new source.")
+
+
 def _render_county_drilldown(county_key, needs, acs_df, fred=None, zori=None, zhvi=None):
     needs_row = needs.set_index("key").loc[county_key]
     st.markdown(f"#### {needs_row['label']} — housing need")
@@ -1055,6 +1199,9 @@ def _render_county_drilldown(county_key, needs, acs_df, fred=None, zori=None, zh
         st.caption(f"Intensity: {needs_row['intensity_total']:.0f} total / "
                    f"{needs_row['intensity_rental']:.0f} rental units needed per "
                    f"1,000 existing households ({needs_row['households']:,.0f} households).")
+
+    st.write("")
+    _render_growth_drivers(county_key, needs_row, fred)
 
     if fred:
         st.write("")

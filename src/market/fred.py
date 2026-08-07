@@ -1,22 +1,40 @@
 """
-FRED (Federal Reserve Economic Data) integration — home-price appreciation and
-building-permit activity, layered onto the county housing-need view as a
-"is the market already responding?" signal.
+FRED (Federal Reserve Economic Data) integration — home-price appreciation,
+building-permit activity, and labor-market health, layered onto the county
+housing-need view as a "is the market already responding, and what's driving
+the need" signal.
 
-Three data types, three cadences, one combined disk cache:
+Four data types, one combined disk cache:
   - County HPI (FHFA All-Transactions Index, annual) — `ATNHPIUS<FIPS>A`
   - State HPI baseline (quarterly) — `MISTHPI`, annualized for comparison
   - County building permits (Census BPS, annual, residential-only) — `BPPRIV0<FIPS>`
+  - County unemployment rate (BLS LAUS, monthly) — `MI<ABBR>URN`, where <ABBR>
+    is a per-county code from config.FRED_COUNTY_ABBR (a different, non-FIPS
+    naming scheme than HPI/permits, so it can't be built from FIPS alone).
+    Chosen over a raw "Employed Persons" count deliberately: that count
+    conflates population growth (already shown separately, see market/
+    housing_needs.py) with actual labor-market health, and its most recent
+    ~8-12 months are NOT seasonally adjusted preliminary LAUS estimates that
+    showed a spurious synchronized ~5-7% "drop" across all 4 counties in
+    2026-08 testing (confirmed artifact: the unemployment rate for the same
+    counties/months stayed in a normal band, and October 2025 data was
+    missing across the board — a benchmark-revision signature, not four
+    independent economies declining in lockstep). Unemployment rate is also
+    self-normalizing (already a %, no population-size effect to strip out).
   - National 30-yr mortgage rate (weekly, tool-wide) — `MORTGAGE30US`
 
-County series IDs are built from config.MARKET_COUNTIES' FIPS codes, so a
-county added there is picked up automatically — no new series ID to hardcode.
+County series IDs (except unemployment rate) are built from
+config.MARKET_COUNTIES' FIPS codes, so a county added there is picked up
+automatically — no new series ID to hardcode.
 
 Public API:
     load_fred_data(refresh=False) -> dict
-        {"mortgage_rate": [...], "state_hpi": [...], "counties": {key: {"hpi": [...], "permits": [...]}}}
+        {"mortgage_rate": [...], "state_hpi": [...],
+         "counties": {key: {"hpi": [...], "permits": [...], "unemployment": [...]}}}
     mortgage_snapshot(fred_data) -> dict | None
     hpi_metrics(county_key, fred_data) -> dict | None
+    unemployment_metrics(county_key, fred_data) -> dict | None
+    unemployment_chart_frame(county_key, fred_data) -> list
     momentum_badge(county_key, fred_data, needs_row) -> dict | None
 """
 from __future__ import annotations
@@ -34,7 +52,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import (  # noqa: E402
     ROOT, DATA_RAW, MARKET_COUNTIES, FRED_BASE_URL, FRED_STATE_HPI_SERIES,
     FRED_MORTGAGE_SERIES, FRED_MOMENTUM_RED_MAX, FRED_MOMENTUM_YELLOW_MAX,
+    FRED_COUNTY_ABBR,
 )
+from market import growth_utils  # noqa: E402
 
 _CACHE = DATA_RAW / "market_fred.json"
 
@@ -101,7 +121,17 @@ def _build() -> dict:
         except Exception as e:                       # noqa: BLE001
             print(f"  [warn] FRED permits fetch failed for {c['key']}: {e}")
             permits_obs = []
-        counties[c["key"]] = {"hpi": hpi_obs, "permits": permits_obs}
+        try:
+            abbr = FRED_COUNTY_ABBR[c["key"]]
+            unemployment_monthly = _fetch_observations(f"MI{abbr}URN", api_key)
+            unemployment_obs = growth_utils.annualize_observations(unemployment_monthly)
+        except Exception as e:                       # noqa: BLE001
+            print(f"  [warn] FRED unemployment fetch failed for {c['key']}: {e}")
+            unemployment_monthly, unemployment_obs = [], []
+        counties[c["key"]] = {
+            "hpi": hpi_obs, "permits": permits_obs,
+            "unemployment": unemployment_obs, "unemployment_monthly": unemployment_monthly,
+        }
 
     return {"mortgage_rate": mortgage_obs, "state_hpi": state_hpi_obs, "counties": counties}
 
@@ -195,6 +225,34 @@ def hpi_chart_frame(county_key: str, fred_data: dict, years: int = 15):
     return rows
 
 
+def unemployment_metrics(county_key: str, fred_data: dict) -> dict | None:
+    """Latest monthly unemployment rate + delta vs the SAME month one year
+    earlier (not vs an annual average — avoids any seasonal mismatch, and
+    a rate is already normalized so there's no annualizing-then-comparing
+    step needed the way there was for a raw employment count)."""
+    monthly = (fred_data.get("counties", {}).get(county_key) or {}).get("unemployment_monthly") or []
+    if not monthly:
+        return None
+    latest = monthly[-1]
+    latest_year, month = latest["date"][:4], latest["date"][5:7]
+    prior_year = str(int(latest_year) - 1)
+    prior = next((o for o in monthly if o["date"][:4] == prior_year and o["date"][5:7] == month), None)
+    return {
+        "latest_date": latest["date"], "latest_value": latest["value"],
+        "delta_pts": (latest["value"] - prior["value"]) if prior else None,
+        "prior_date": prior["date"] if prior else None,
+    }
+
+
+def unemployment_chart_frame(county_key: str, fred_data: dict, years: int = 15) -> list:
+    """Annual-average unemployment rate, most recent `years` — plotted
+    directly as a plain %, no rebasing or YoY-growth-of-a-rate transform
+    (unlike HPI/ZORI/ZHVI, a rate is already a directly comparable number,
+    so a raw level line is the honest, intuitive chart here)."""
+    obs = (fred_data.get("counties", {}).get(county_key) or {}).get("unemployment") or []
+    return [{"year": o["date"][:4], "value": o["value"]} for o in obs[-years:]]
+
+
 def permits_recent(county_key: str, fred_data: dict, years: int = 10) -> list:
     """Last N years of permit counts for the bar chart."""
     permits_obs = (fred_data.get("counties", {}).get(county_key) or {}).get("permits") or []
@@ -246,5 +304,9 @@ if __name__ == "__main__":
     for c in MARKET_COUNTIES:
         m = hpi_metrics(c["key"], data)
         if m:
-            print(f"{c['label']:18s} YoY {m['yoy_pct']:+.1f}%  "
+            print(f"{c['label']:18s} HPI YoY {m['yoy_pct']:+.1f}%  "
                   f"5yr {m['cum_5y_pct']:+.1f}%  vs MI {m['vs_state_delta']:+.1f} pts")
+        u = unemployment_metrics(c["key"], data)
+        if u:
+            delta = f"{u['delta_pts']:+.1f} pts vs {u['prior_date']}" if u["delta_pts"] is not None else "n/a"
+            print(f"{c['label']:18s} unemployment {u['latest_value']:.1f}% ({u['latest_date']})  {delta}")

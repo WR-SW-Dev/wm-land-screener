@@ -25,7 +25,6 @@ import csv
 import io
 import json
 import sys
-from collections import defaultdict
 from pathlib import Path
 
 import requests
@@ -35,6 +34,7 @@ from config import (  # noqa: E402
     DATA_RAW, MARKET_COUNTIES, ZORI_COUNTY_URL, ZORI_METRO_URL, ZORI_METRO_FOR_COUNTY,
     ZHVI_COUNTY_URL, ZHVI_STATE_URL,
 )
+from market import growth_utils  # noqa: E402
 
 _CACHE_ZORI = DATA_RAW / "market_zori.json"
 _CACHE_ZHVI = DATA_RAW / "market_zhvi.json"
@@ -52,35 +52,10 @@ def _date_cols(row: dict) -> list:
 
 
 def _annualize(row: dict, date_cols: list) -> list:
-    """Collapse monthly observations to annual averages, matching the
-    permits chart's cadence. A partial current year still becomes its own
-    (lower-confidence) point rather than being dropped — same spirit as the
-    permits chart's YTD bar. `months` records how many months went into that
-    average, so a partial final year can be flagged downstream instead of
-    silently compared to full prior years as if it were one."""
-    by_year = defaultdict(list)
-    for col in date_cols:
-        v = row.get(col)
-        if v:
-            by_year[col[:4]].append(float(v))
-    return [{"date": f"{y}-01-01", "value": sum(vals) / len(vals), "months": len(vals)}
-            for y, vals in sorted(by_year.items())]
-
-
-def _yoy_frame(obs: list) -> list:
-    """Year-over-year growth, one row per year: {year, pct, provisional}.
-    Shared by rent and home-value trends (and matches the permits chart's
-    growth_rows shape in render.py) so all three growth charts can reuse the
-    exact same zero-line / up-down-coloring / hollow-point rendering."""
-    rows = []
-    for i in range(1, len(obs)):
-        y0, y1 = obs[i - 1], obs[i]
-        if not y0["value"]:
-            continue
-        pct = (y1["value"] / y0["value"] - 1) * 100
-        provisional = y1.get("months", 12) < 12
-        rows.append({"year": y1["date"][:4], "pct": pct, "provisional": provisional})
-    return rows
+    """Collapse a CSV row's monthly columns into annual averages via the
+    shared growth_utils helper (same one FRED's employment series uses)."""
+    obs = [{"date": col, "value": float(row[col])} for col in date_cols if row.get(col)]
+    return growth_utils.annualize_observations(obs)
 
 
 # ── ZORI (rent) ──────────────────────────────────────────────────────────────
@@ -142,7 +117,7 @@ def rent_metrics(county_key: str, zori_data: dict) -> dict | None:
 
 def rent_yoy_frame(county_key: str, zori_data: dict) -> list:
     obs = (zori_data.get("counties", {}) or {}).get(county_key) or []
-    return _yoy_frame(obs)
+    return growth_utils.yoy_frame(obs)
 
 
 # ── ZHVI (home value) ────────────────────────────────────────────────────────
@@ -202,7 +177,7 @@ def value_metrics(county_key: str, zhvi_data: dict) -> dict | None:
 
 def value_yoy_frame(county_key: str, zhvi_data: dict) -> list:
     obs = (zhvi_data.get("counties", {}) or {}).get(county_key) or []
-    return _yoy_frame(obs)
+    return growth_utils.yoy_frame(obs)
 
 
 if __name__ == "__main__":

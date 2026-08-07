@@ -599,6 +599,17 @@ FRED_BASE_URL          = "https://api.stlouisfed.org/fred"
 FRED_STATE_HPI_SERIES  = "MISTHPI"
 FRED_MORTGAGE_SERIES   = "MORTGAGE30US"
 
+# County unemployment rate: series `MI<ABBR>URN` — a different, non-FIPS-formula
+# naming scheme (BEA/FRED regional-data short codes) than HPI/permits above, so
+# each county's abbreviation has to be hardcoded rather than built from FIPS.
+# Verified live against the FRED API 2026-08-06.
+FRED_COUNTY_ABBR = {
+    "ottawa":   "OTTA0",
+    "kent":     "KENT1",
+    "muskegon": "MUSK1",
+    "allegan":  "ALLE0",
+}
+
 # Momentum badge: % of a county's 5-yr HNA unit gap already covered by permits
 # issued so far within that study period. Below RED_MAX = red (Underserved),
 # up to YELLOW_MAX = yellow (Responding), above = green (Saturating). Matches

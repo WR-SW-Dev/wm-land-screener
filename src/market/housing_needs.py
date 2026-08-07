@@ -19,6 +19,16 @@ for for-sale too: Grand Rapids ($106,400/$177,333/$283,733/$425,600 price
 breaks) and Balance-of-County use identical price bands, so summing is exact,
 not a mismatched-bucket approximation.
 
+`population_growth`/`household_growth` (added 2026-08-06) are 4-point series
+from each report's own "Total Population"/"Total Households" tables: 2010 and
+2020 Census actuals, a current-year estimate, and an end-of-study-period
+projection — all from the same report, source "2010, 2020 Census; ESRI;
+[Urban Decision Group;] Bowen National Research" (transcribed from the exact
+tables, page-cited in each county's comment below). Deliberately NOT a smooth
+annual series — there's a 10-year gap between the first two real points, so a
+line chart across all 4 would misrepresent it as continuous. The last point
+is a projection, not a measured value; rendered accordingly (see render.py).
+
 Public API:
     HOUSING_NEEDS                       # raw dict keyed by county key
     load_housing_needs(acs_df) -> df    # merges ACS households → intensity
@@ -46,6 +56,20 @@ HOUSING_NEEDS = {
             {"ami": "81–120%", "price": "$274,134–$411,200",  "units": 6_973},
             {"ami": "121%+",   "price": "$411,201+",          "units": 2_500},
         ],
+        # Total Population p.IV-2 / Total Households p.IV-15, Ottawa County
+        # 2025 HNA. Source: "2010, 2020 Census; ESRI; Bowen National Research."
+        "population_growth": [
+            {"year": "2010", "value": 263_801},
+            {"year": "2020", "value": 296_200},
+            {"year": "2024", "value": 306_943},
+            {"year": "2029", "value": 315_675, "projected": True},
+        ],
+        "household_growth": [
+            {"year": "2010", "value": 93_775},
+            {"year": "2020", "value": 107_239},
+            {"year": "2024", "value": 112_718},
+            {"year": "2029", "value": 117_957, "projected": True},
+        ],
     },
     "kent": {
         "label": "Kent County",
@@ -71,6 +95,23 @@ HOUSING_NEEDS = {
             {"ami": "81–120%", "price": "$283,734–$425,600",  "units": 7_506},
             {"ami": "121%+",   "price": "$425,601+",          "units": 6_880},
         ],
+        # Total Population p.IV-2 / Total Households p.IV-14, Kent County HNA.
+        # Source: "2010, 2020 Census; ESRI; Bowen National Research." County
+        # totals are Grand Rapids (PSA) + Balance of County (SSA) summed —
+        # the report gives the county-total row directly, not something
+        # derived here.
+        "population_growth": [
+            {"year": "2010", "value": 602_622},
+            {"year": "2020", "value": 657_974},
+            {"year": "2024", "value": 669_956},
+            {"year": "2029", "value": 677_526, "projected": True},
+        ],
+        "household_growth": [
+            {"year": "2010", "value": 227_239},
+            {"year": "2020", "value": 251_658},
+            {"year": "2024", "value": 258_621},
+            {"year": "2029", "value": 264_992, "projected": True},
+        ],
     },
     "muskegon": {
         "label": "Muskegon County",
@@ -93,6 +134,24 @@ HOUSING_NEEDS = {
             {"ami": "81–120%", "price": "$201,868–$302,800", "units": 2_420},
             {"ami": "121%+",   "price": "$302,801+",         "units": 2_339},
         ],
+        # Total Population p.IV-2 / Total Households p.IV-14, Muskegon County
+        # HNA. Source: "2010, 2020 Census; ESRI; Urban Decision Group; Bowen
+        # National Research." Only county in this tool where the projection
+        # is a DECLINE, not growth — population -222 (-0.1%) and households
+        # only +217 (+0.3%) over 2022-2027, "identical to the projected
+        # statewide rate" per the report's own text.
+        "population_growth": [
+            {"year": "2010", "value": 172_188},
+            {"year": "2020", "value": 175_824},
+            {"year": "2022", "value": 175_859},
+            {"year": "2027", "value": 175_637, "projected": True},
+        ],
+        "household_growth": [
+            {"year": "2010", "value": 65_616},
+            {"year": "2020", "value": 68_610},
+            {"year": "2022", "value": 68_822},
+            {"year": "2027", "value": 69_039, "projected": True},
+        ],
     },
     "allegan": {
         "label": "Allegan County",
@@ -112,6 +171,21 @@ HOUSING_NEEDS = {
             {"ami": "51–80%",  "price": "$146,167–$233,866",  "units": 709},
             {"ami": "81–120%", "price": "$233,867–$379,600",  "units": 1_657},
             {"ami": "121%+",   "price": "$379,601+",          "units": 1_744},
+        ],
+        # Total Population p.IV-2 / Total Households p.IV-14, Allegan County
+        # HNA. Source: "2010, 2020 Census; ESRI; Urban Decision Group; Bowen
+        # National Research."
+        "population_growth": [
+            {"year": "2010", "value": 111_408},
+            {"year": "2020", "value": 120_502},
+            {"year": "2022", "value": 121_956},
+            {"year": "2027", "value": 123_322, "projected": True},
+        ],
+        "household_growth": [
+            {"year": "2010", "value": 42_018},
+            {"year": "2020", "value": 45_545},
+            {"year": "2022", "value": 46_126},
+            {"year": "2027", "value": 46_691, "projected": True},
         ],
     },
 }
